@@ -133,6 +133,18 @@ button.go:disabled{opacity:.35;cursor:default}
 button.alt{background:var(--panel-2);color:var(--ink);border:1px solid var(--line);
   font-size:13px;padding:8px 14px;margin:6px 6px 0 0}
 button.alt:hover{border-color:var(--night)}
+.pb{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-top:12px}
+.pb-item{background:var(--panel-2);border:1px solid var(--line);border-radius:5px;padding:12px}
+.pb-item h4{font-family:var(--display);text-transform:uppercase;letter-spacing:.05em;
+  font-size:15px;margin:0 0 8px;color:var(--ink)}
+.pb-row{display:flex;justify-content:space-between;gap:8px;font-size:12px;
+  color:var(--ink-dim);padding:2px 0}
+.pb-row b{color:var(--ink);font-weight:500}
+.pb-big{font-family:var(--display);font-size:30px;line-height:1.05;color:var(--pv);
+  margin:8px 0 2px;letter-spacing:.01em}
+.pb-big.slow{color:var(--day)}
+.pb-big.never{color:var(--bad);font-size:20px}
+.pb-unit{font-size:11px;color:var(--ink-dim)}
 footer.lic{margin-top:30px;padding-top:16px;border-top:1px solid var(--line);
   font-size:11px;color:var(--ink-dim);line-height:1.6}
 footer.lic p{margin:0 0 7px}
@@ -245,6 +257,8 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
       <div><label>wariant A — moc kW</label><input id="powA" value="7"></div>
       <div><label>wariant B — pojemność kWh</label><input id="capB" value="28"></div>
       <div><label>wariant B — moc kW</label><input id="powB" value="12"></div>
+      <div><label>wariant A — cena zł</label><input id="priceA" value="16000"></div>
+      <div><label>wariant B — cena zł</label><input id="priceB" value="30000"></div>
       <div><label>sprawność cyklu %</label><input id="eff" value="90"></div>
       <div><label>VAT %</label><input id="vat" value="23"></div>
     </div>
@@ -296,6 +310,7 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
   <h2>Podsumowanie okresu</h2>
   <div class="card"><div class="scroll"><table id="totalTab"></table></div></div>
   <div class="card" id="chartCard"></div>
+  <div class="card" id="paybackCard"></div>
 </section>
 
 <p class="note" style="margin-top:26px;border-top:1px solid var(--line);padding-top:14px">
@@ -1023,6 +1038,7 @@ function run(){
   document.getElementById('shiftGrid').style.opacity=cfg.shiftOn?'1':'.4';
   document.getElementById('shiftG11').disabled=!cfg.shiftOn;
   const capA=P('capA'),powA=P('powA'),capB=P('capB'),powB=P('powB');
+  const prA=P('priceA'),prB=P('priceB');
   const opt0={sell:document.getElementById('sell').checked,
               autoThr:document.getElementById('autoThr').checked,
               thr:P('thr'), pvRes:P('pvRes'), corr,
@@ -1035,15 +1051,15 @@ function run(){
   const variants=[
     {id:'g11',name:'G11',                      g12:false,cap:0,   pow:0,   shift:false},
     {id:'g12',name:'G12',                      g12:true, cap:0,   pow:0,   shift:false},
-    {id:'a',  name:`G12 +${fmt(capA,0)} kWh`,  g12:true, cap:capA,pow:powA,shift:false},
-    {id:'b',  name:`G12 +${fmt(capB,0)} kWh`,  g12:true, cap:capB,pow:powB,shift:false}];
+    {id:'a',  name:`G12 +${fmt(capA,0)} kWh`,  g12:true, cap:capA,pow:powA,shift:false,price:prA},
+    {id:'b',  name:`G12 +${fmt(capB,0)} kWh`,  g12:true, cap:capB,pow:powB,shift:false,price:prB}];
   if(anyShift){
     if(cfg.shiftG11)
       variants.push({id:'g11s',name:'G11 + noc',g12:false,cap:0,pow:0,shift:true});
     variants.push(
       {id:'g12s',name:'G12 + noc',                        g12:true,cap:0,   pow:0,   shift:true},
-      {id:'as',  name:`G12 +${fmt(capA,0)} kWh + noc`, g12:true,cap:capA,pow:powA,shift:true},
-      {id:'bs',  name:`G12 +${fmt(capB,0)} kWh + noc`, g12:true,cap:capB,pow:powB,shift:true});
+      {id:'as',  name:`G12 +${fmt(capA,0)} kWh + noc`, g12:true,cap:capA,pow:powA,shift:true,price:prA},
+      {id:'bs',  name:`G12 +${fmt(capB,0)} kWh + noc`, g12:true,cap:capB,pow:powB,shift:true,price:prB});
   }
 
   // Zapętlenie roku: powtarzamy przebieg, podając na wejście stan z końca
@@ -1084,6 +1100,8 @@ function run(){
   document.getElementById('totalTab').outerHTML=
     resultTable(items,foot).replace('<table','<table id="totalTab"');
   LAST_CHART={months:res.months,variants}; drawChart();
+  document.getElementById('paybackCard').innerHTML=
+    paybackBlock(variants,res.totals,MONTHS.length);
 }
 
 /* ============ wykres „do zapłaty” ============ */
@@ -1167,6 +1185,50 @@ function drawChart(){
 }
 addEventListener('resize',(()=>{let t;return()=>{clearTimeout(t);t=setTimeout(drawChart,150)}})());
 addEventListener('orientationchange',()=>setTimeout(drawChart,250));
+
+/* ============ czas zwrotu ============ */
+// Zwrot liczony przy założeniu, że każdy miesiąc roku wygląda jak średnia
+// z wczytanych. Odniesieniem jest ten sam wariant bez magazynu — porównujemy
+// sam koszt akumulatora z tym, co daje sam akumulator, a nie z efektem
+// zmiany taryfy czy przesunięcia zużycia, które nic nie kosztują.
+function paybackBlock(variants,totals,nMonths){
+  const bat=variants.filter(v=>v.cap>0);
+  if(!bat.length) return '';
+  const items=bat.map(v=>{
+    const base=variants.find(b=>b.cap===0&&b.g12===v.g12&&b.shift===v.shift)||variants[0];
+    const save=totals[base.id].pay-totals[v.id].pay;
+    const perMonth=save/nMonths;
+    const months=perMonth>0?v.price/perMonth:Infinity;
+    return {v,base,perMonth,months};
+  });
+  const body=items.map(it=>{
+    const m=it.months;
+    const cls=!isFinite(m)?'never':(m>180?'slow':'');
+    const big=!isFinite(m)?'brak zwrotu'
+      :fmt(m,0)+' <span class="pb-unit">mies.</span>';
+    return '<div class="pb-item"><h4>'+it.v.name+'</h4>'+
+      '<div class="pb-row"><span>cena</span><b>'+zl(it.v.price)+'</b></div>'+
+      '<div class="pb-row"><span>za kWh pojemności</span><b>'+
+        zl(it.v.price/it.v.cap)+'</b></div>'+
+      '<div class="pb-row"><span>odniesienie</span><b>'+it.base.name+'</b></div>'+
+      '<div class="pb-row"><span>oszczędność / mies.</span><b>'+zl(it.perMonth)+'</b></div>'+
+      '<div class="pb-big '+cls+'">'+big+'</div>'+
+      (isFinite(m)?'<div class="pb-unit">czyli '+fmt(m/12,1)+' roku</div>':
+        '<div class="pb-unit">ten wariant nie jest tańszy od odniesienia</div>')+
+      '</div>';
+  }).join('');
+  const warn=nMonths<12
+    ? '<p class="note">Uwaga: policzone z '+nMonths+' '+(nMonths===1?'miesiąca':'mies.')+
+      ', a nie z pełnego roku. Jeśli to miesiące zimowe, oszczędność jest zawyżona i zwrot '+
+      'wyjdzie zbyt optymistyczny — latem magazyn zarabia znacznie mniej.'
+    : '<p class="note">Policzone z pełnych dwunastu miesięcy.';
+  return '<h3 style="font-family:var(--display);text-transform:uppercase;letter-spacing:.06em;'+
+    'font-size:16px;margin:0 0 4px;color:var(--ink-dim)">Czas zwrotu</h3>'+
+    '<div class="pb">'+body+'</div>'+warn+
+    ' Zwrot prosty: cena podzielona przez średnią miesięczną oszczędność, bez kosztu '+
+    'kapitału, degradacji ogniw i zmian stawek. Odniesieniem jest ten sam wariant bez '+
+    'magazynu, więc liczba mówi o wartości samego akumulatora.</p>';
+}
 
 /* ============ karta miesiąca ============ */
 function monthCard(m,rows,grids,variants,prices,cov,sh){
