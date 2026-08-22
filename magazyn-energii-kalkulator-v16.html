@@ -1,0 +1,1225 @@
+<!DOCTYPE html>
+<!--
+  Kalkulator taryf i magazynu energii
+  Copyright (C) 2026 Tomasz Gregorek
+
+  This program is free software; you can redistribute it and/or modify it
+  under the terms of the GNU General Public License version 2 as published
+  by the Free Software Foundation.
+
+  This program is distributed in the hope that it will be useful, but
+  WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+  General Public License for more details.
+
+  You should have received a copy of the GNU General Public License along
+  with this program; if not, see <https://www.gnu.org/licenses/old-licenses/gpl-2.0.html>.
+
+  SPDX-License-Identifier: GPL-2.0-only
+-->
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Magazyn energii — porównanie taryf PGE</title>
+<style>
+:root{
+  --bg:#0d1420; --panel:#141d2b; --panel-2:#1b2636; --line:#26344a;
+  --ink:#e6edf7; --ink-dim:#8ea0ba;
+  --night:#3fa7d6; --day:#f2a541; --pv:#5fd39a; --bad:#e5654f;
+  --display:"Roboto Condensed","Arial Narrow","Helvetica Neue Condensed",
+    "Liberation Sans Narrow",system-ui,-apple-system,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"Roboto Mono",Menlo,Consolas,
+    "Liberation Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--mono);font-size:14px;
+     line-height:1.5;-webkit-text-size-adjust:100%;padding:0 0 64px}
+.wrap{max-width:880px;margin:0 auto;padding:0 14px}
+
+header{padding:26px 0 18px;border-bottom:1px solid var(--line);margin-bottom:20px}
+h1{font-family:var(--display);font-weight:700;font-size:34px;line-height:.98;
+   letter-spacing:.01em;text-transform:uppercase;margin:0 0 6px}
+h1 span{color:var(--night)}
+.sub{color:var(--ink-dim);font-size:12.5px;max-width:62ch}
+
+.ribbon{display:flex;height:20px;margin:16px 0 6px;border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.ribbon i{flex:1}
+.ribbon i.n{background:color-mix(in srgb,var(--night) 55%,transparent)}
+.ribbon i.d{background:color-mix(in srgb,var(--day) 32%,transparent)}
+.ribbon-lbl{display:flex;justify-content:space-between;font-size:10px;color:var(--ink-dim);letter-spacing:.06em}
+
+section{margin:22px 0}
+h2{font-family:var(--display);text-transform:uppercase;letter-spacing:.09em;font-size:15px;
+   font-weight:600;color:var(--ink-dim);margin:0 0 10px;display:flex;align-items:center;gap:10px}
+h2::after{content:"";flex:1;height:1px;background:var(--line)}
+
+#drop{border:1px dashed var(--line);border-radius:6px;background:var(--panel);
+      padding:26px 16px;text-align:center;cursor:pointer;transition:.15s}
+#drop:hover,#drop.hot{border-color:var(--night);background:var(--panel-2)}
+#drop b{font-family:var(--display);font-size:19px;letter-spacing:.03em;display:block;text-transform:uppercase}
+#drop small{color:var(--ink-dim);font-size:11.5px}
+input[type=file]{display:none}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chip{background:var(--panel-2);border:1px solid var(--line);border-radius:3px;
+      padding:3px 8px;font-size:11px;color:var(--ink-dim)}
+.chip b{color:var(--ink);font-weight:500}
+.chip.ok{border-color:color-mix(in srgb,var(--pv) 45%,var(--line))}
+.chip.warn{border-color:color-mix(in srgb,var(--day) 55%,var(--line))}
+
+details{background:var(--panel);border:1px solid var(--line);border-radius:6px;margin-top:10px}
+summary{padding:11px 14px;cursor:pointer;font-family:var(--display);text-transform:uppercase;
+        letter-spacing:.08em;font-size:14px;color:var(--ink-dim);list-style:none}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"▸ ";color:var(--night)}
+details[open] summary::before{content:"▾ "}
+.body{padding:4px 14px 16px;border-top:1px solid var(--line)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 14px;margin:12px 0}
+label{display:block;font-size:10.5px;color:var(--ink-dim);letter-spacing:.05em;
+      text-transform:uppercase;margin-bottom:3px}
+input[type=text],input:not([type]){width:100%;background:var(--bg);border:1px solid var(--line);
+      border-radius:3px;color:var(--ink);font-family:var(--mono);font-size:14px;padding:7px 8px}
+input:focus{outline:2px solid var(--night);outline-offset:-1px}
+.check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-dim);margin:8px 0}
+.check input{width:16px;height:16px;accent-color:var(--night)}
+.note{font-size:11px;color:var(--ink-dim);margin:10px 0 0}
+.sub-h{font-family:var(--display);text-transform:uppercase;letter-spacing:.08em;
+       font-size:12px;color:var(--day);margin:16px 0 2px}
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px 14px;margin-bottom:16px}
+.card-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+.card-h h3{font-family:var(--display);font-size:26px;font-weight:700;margin:0;text-transform:uppercase}
+.meta{font-size:11px;color:var(--ink-dim);text-align:right}
+
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:12px -14px 0;padding:0 14px}
+table{border-collapse:collapse;width:100%;font-size:12.5px;min-width:915px;table-layout:fixed}
+th,td{padding:7px 8px;text-align:right;border-bottom:1px solid var(--line);
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* pierwsza kolumna przyklejona, żeby nazwa wariantu została widoczna
+   przy przewijaniu tabeli w bok na wąskim ekranie */
+th:first-child,td:first-child{position:sticky;left:0;z-index:1;background:var(--panel);
+      box-shadow:1px 0 0 var(--line)}
+th{font-family:var(--display);font-size:12px;letter-spacing:.06em;text-transform:uppercase;
+   color:var(--ink-dim);font-weight:600}
+th:first-child,td:first-child{text-align:left}
+tr.best td{color:var(--pv)}
+tr.best td:first-child{box-shadow:inset 3px 0 0 var(--pv),1px 0 0 var(--line)}
+td.big{font-size:15px;font-weight:600}
+tfoot td{border-bottom:none;padding-top:10px;color:var(--ink-dim);font-size:11.5px;
+  white-space:normal;overflow:visible;text-overflow:clip;position:static;box-shadow:none}
+
+.tabs{display:flex;gap:5px;flex-wrap:wrap;margin:16px 0 8px}
+.tab{background:var(--panel-2);border:1px solid var(--line);border-radius:3px;color:var(--ink-dim);
+     font-family:var(--mono);font-size:11px;padding:5px 9px;cursor:pointer}
+.tab[aria-pressed="true"]{background:var(--night);border-color:var(--night);color:#06131c;font-weight:600}
+canvas{width:100%;height:auto;display:block;image-rendering:pixelated;border:1px solid var(--line);border-radius:3px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:10.5px;color:var(--ink-dim);margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+
+.shiftRow{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px 12px;align-items:end;
+  padding:9px 0;border-bottom:1px solid var(--line)}
+.shiftRow:last-child{border-bottom:none}
+.shiftName{font-family:var(--display);text-transform:uppercase;letter-spacing:.05em;
+  font-size:15px;color:var(--ink);padding-bottom:6px}
+@media (max-width:520px){.shiftRow{grid-template-columns:1fr 1fr}
+  .shiftName{grid-column:1/-1;padding-bottom:0}}
+
+.err{color:var(--bad);font-size:12px;margin-top:8px;white-space:pre-line}
+button.go,button.alt{border:0;border-radius:4px;font-family:var(--display);letter-spacing:.06em;
+  text-transform:uppercase;font-weight:700;cursor:pointer}
+button.go{background:var(--night);color:#06131c;font-size:16px;padding:11px 20px;width:100%;margin-top:12px}
+button.go:disabled{opacity:.35;cursor:default}
+button.alt{background:var(--panel-2);color:var(--ink);border:1px solid var(--line);
+  font-size:13px;padding:8px 14px;margin:6px 6px 0 0}
+button.alt:hover{border-color:var(--night)}
+footer.lic{margin-top:30px;padding-top:16px;border-top:1px solid var(--line);
+  font-size:11px;color:var(--ink-dim);line-height:1.6}
+footer.lic p{margin:0 0 7px}
+footer.lic b{color:var(--ink);font-weight:500}
+footer.lic a{color:var(--night);text-decoration:none;border-bottom:1px solid transparent}
+footer.lic a:hover{border-bottom-color:var(--night)}
+footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Magazyn <span>energii</span><br>kalkulator taryf</h1>
+  <div class="sub">Wczytaj godzinowe pliki XLS z ePGE i porównaj cztery warianty rozliczenia:
+    G11 bez magazynu, G12 bez magazynu oraz G12 z magazynem o dwóch pojemnościach.
+    Nadwyżki wyceniane godzinowo po RCE, depozyt przenosi się między miesiącami.</div>
+  <div class="ribbon" id="ribbon"></div>
+  <div class="ribbon-lbl"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+  <div class="ribbon-lbl" style="margin-top:4px">
+    <span><i style="color:var(--night)">■</i> strefa tania G12</span>
+    <span><i style="color:var(--day)">■</i> strefa droga G12</span>
+    <span>zima / lato wg daty w pliku</span>
+  </div>
+</header>
+
+<section>
+  <h2>Zużycie</h2>
+  <div id="drop">
+    <b>Wybierz pliki XLS</b>
+    <small>Godzinowe zestawienia z ePGE — po jednym na miesiąc. Można wskazać kilka naraz.</small>
+    <input type="file" id="files" multiple accept=".xls,.xlsx">
+  </div>
+  <div class="chips" id="chips"></div>
+  <div class="check" id="loopWrap"><input type="checkbox" id="loopYear">
+    <span id="loopLbl">zapętl rok — ostatni miesiąc poprzedza pierwszy</span></div>
+  <div class="err" id="err"></div>
+</section>
+
+<section>
+  <h2>Ceny RCE</h2>
+  <div class="sub" style="font-size:12px">Rozliczenie godzinowe wymaga ceny dla każdej godziny osobno.
+    Pobierz ją z API PSE albo wgraj plik z raportu RCE‑PLN. Bez danych aplikacja użyje ceny stałej
+    z pola poniżej, co daje wynik jak przy rozliczeniu miesięcznym.</div>
+  <button class="alt" id="fetchRce">Pobierz z PSE</button>
+  <button class="alt" id="pickRce">Wgraj plik RCE</button>
+  <button class="alt" id="saveRce">Zapisz ceny do pliku</button>
+  <input type="file" id="rceFiles" multiple accept=".csv,.xls,.xlsx,.txt,.json">
+  <div class="check" style="margin-top:10px"><input type="checkbox" id="rceCache" checked>
+    <span id="rceCacheLbl">zapamiętuj pobrane ceny w tej przeglądarce</span></div>
+  <button class="alt" id="clearRce">Wyczyść zapamiętane ceny</button>
+  <div class="chips" id="rceChips"></div>
+  <div class="err" id="rceErr"></div>
+</section>
+
+<details id="shiftCfg">
+  <summary>Przesunięcie zużycia na noc</summary>
+  <div class="body">
+    <p class="note" style="margin-top:10px">Dla każdego miesiąca podaj średnią dobową ilość energii,
+      którą da się przenieść z drogich godzin na tanie — nagrzanie CWU i wylewki w nocy do wyższej
+      temperatury, żeby w dzień grzać mniej. Drugie pole to dodatkowe zużycie wynikające z większych
+      strat postojowych przy wyższej temperaturze zasobnika i jastrychu.</p>
+    <div id="shiftGrid"></div>
+    <div class="check" style="margin-top:12px"><input type="checkbox" id="shiftOn" checked>
+      <span>uwzględniaj przesunięcie w obliczeniach</span></div>
+    <div class="check"><input type="checkbox" id="shiftG11">
+      <span>pokaż też wiersz G11 z przesunięciem</span></div>
+    <p class="note">Energia zdejmowana jest proporcjonalnie z tych drogich godzin, w których
+      występuje realny pobór — jeśli w danej godzinie pracuje PV, nie ma czego przenosić.
+      Dodawana jest równomiernie we wszystkich godzinach strefy taniej, czyli zimą 22–6 oraz 13–15.
+      Jeśli w któryś dzień pobór w drogiej strefie jest mniejszy niż zadane przesunięcie,
+      przenoszone jest tylko tyle, ile faktycznie było, a straty skalują się proporcjonalnie.
+      Warianty z przesunięciem pojawiają się w tabeli jako dodatkowe wiersze z dopiskiem
+      „+ noc", obok tych samych konfiguracji bez przesunięcia — dzięki temu różnicę widać
+      w jednym miejscu. G11 z przesunięciem jest domyślnie ukryte, bo bez stref daje tylko
+      wzrost zużycia o straty.</p>
+  </div>
+</details>
+
+<details id="cfg">
+  <summary>Stawki i parametry</summary>
+  <div class="body">
+    <div class="sub-h">Energia czynna — sprzedawca (zł/kWh netto)</div>
+    <div class="grid">
+      <div><label>G11</label><input id="eG11" value="0.4982"></div>
+      <div><label>G12 strefa droga</label><input id="eG12d" value="0.5656"></div>
+      <div><label>G12 strefa tania</label><input id="eG12n" value="0.3718"></div>
+    </div>
+
+    <div class="sub-h">Składnik zmienny sieciowy — OSD (zł/kWh netto)</div>
+    <div class="grid">
+      <div><label>G11</label><input id="sG11" value="0.3469"></div>
+      <div><label>G12 strefa droga</label><input id="sG12d" value="0.4014"></div>
+      <div><label>G12 strefa tania</label><input id="sG12n" value="0.0765"></div>
+      <div><label>jakościowa + OZE + kogen.</label><input id="addv" value="0.0435"></div>
+    </div>
+
+    <div class="sub-h">Opłaty stałe (zł/mies. netto)</div>
+    <div class="grid">
+      <div><label>sieciowa stała G11</label><input id="fsG11" value="9.98"></div>
+      <div><label>sieciowa stała G12</label><input id="fsG12" value="14.39"></div>
+      <div><label>abonament</label><input id="fAb" value="4.50"></div>
+      <div><label>mocowa</label><input id="fMoc" value="24.05"></div>
+    </div>
+
+    <div class="sub-h">Magazyn energii</div>
+    <div class="grid">
+      <div><label>wariant A — pojemność kWh</label><input id="capA" value="14"></div>
+      <div><label>wariant A — moc kW</label><input id="powA" value="7"></div>
+      <div><label>wariant B — pojemność kWh</label><input id="capB" value="28"></div>
+      <div><label>wariant B — moc kW</label><input id="powB" value="12"></div>
+      <div><label>sprawność cyklu %</label><input id="eff" value="90"></div>
+      <div><label>VAT %</label><input id="vat" value="23"></div>
+    </div>
+    <p class="note">Magazyn ładuje się z nadwyżek PV, a potem z sieci w strefie taniej, i rozładowuje
+      wyłącznie na potrzeby domu w strefie drogiej. Nie oddaje energii do sieci.</p>
+
+    <div class="sub-h">Sprzedaż z magazynu</div>
+    <div class="check"><input type="checkbox" id="sell" checked>
+      <span>oddawaj energię z magazynu w drogich godzinach</span></div>
+    <div class="check"><input type="checkbox" id="autoThr" checked>
+      <span>próg automatyczny — sprzedawaj tylko wtedy, gdy to bije autokonsumpcję</span></div>
+    <div class="grid">
+      <div><label>próg ręczny zł/MWh</label><input id="thr" value="1000"></div>
+      <div><label>rezerwa pojemności na PV kWh</label><input id="pvRes" value="0"></div>
+      <div><label>minimalna cena sprzedaży zł/MWh</label><input id="floor" value="0"></div>
+      <div><label>tolerancja szczytu %</label><input id="peakF" value="95"></div>
+      <div><label>horyzont planowania h</label><input id="horizon" value="36"></div>
+    </div>
+    <p class="note">Sprzedawana jest wyłącznie energia pochodząca z PV — magazyn prowadzi osobne
+      salda dla energii ze słońca i z sieci, a do zasilania domu zużywa najpierw tę z sieci.
+      Zapas PV dzieli się na dwie transze. <b>Rezerwa</b> to tyle, ile dom zużyje, zanim PV znów
+      naładuje magazyn; sprzedaje się ją dopiero powyżej progu opłacalności, bo inaczej trzeba by
+      tę energię odkupić po cenie detalicznej. <b>Nadwyżka</b> to reszta — latem przy małym zużyciu
+      dobowym będzie to prawie cały magazyn. Jej alternatywą nie jest autokonsumpcja, tylko oddanie
+      jutro w południe po cenie dołka, więc sprzedaje się ją bez progu, w najlepiej płatnej godzinie
+      przed kolejnym naładowaniem. Tolerancja szczytu decyduje, jak blisko lokalnego maksimum ceny
+      musi być bieżąca godzina, żeby uznać ją za dobry moment.</p>
+
+    <div class="sub-h">Rozliczenie nadwyżek</div>
+    <div class="grid">
+      <div><label>współczynnik korekcyjny</label><input id="corr" value="1.23"></div>
+      <div><label>cena zastępcza zł/MWh</label><input id="flatRce" value="350"></div>
+    </div>
+    <div class="check"><input type="checkbox" id="clipNeg" checked>
+      <span>ujemne RCE liczone jako zero</span></div>
+    <div class="check"><input type="checkbox" id="depGross" checked>
+      <span>depozyt pomniejsza kwotę brutto energii (a nie netto)</span></div>
+    <p class="note">Depozyt za daną godzinę = nadwyżka [kWh] × RCE z tej godziny × współczynnik.
+      Ceny 15‑minutowe z PSE są uśredniane do godziny, bo licznik prosumencki raportuje godzinowo.
+      Depozyt pomniejsza wyłącznie wartość energii czynnej i jest dostępny dopiero w kolejnym okresie.</p>
+  </div>
+</details>
+
+<button class="go" id="run" disabled>Przelicz</button>
+
+<section id="out"></section>
+
+<section id="totalWrap" hidden>
+  <h2>Podsumowanie okresu</h2>
+  <div class="card"><div class="scroll"><table id="totalTab"></table></div></div>
+  <div class="card" id="chartCard"></div>
+</section>
+
+<p class="note" style="margin-top:26px;border-top:1px solid var(--line);padding-top:14px">
+  Stawki domyślne to taryfy PGE Obrót i PGE Dystrybucja na 2026 r. dla przyłącza 3‑fazowego
+  i rozliczenia miesięcznego. Sprawdź je na własnej fakturze — zwłaszcza opłatę sieciową stałą
+  i próg opłaty mocowej. Wynik jest szacunkiem, nie ofertą ani prognozą faktury.
+</p>
+
+<footer class="lic">
+  <p>Kalkulator taryf i magazynu energii. Copyright © 2026 <b>Tomasz Gregorek</b></p>
+  <p>Program jest wolnym oprogramowaniem: możesz go rozprowadzać dalej lub modyfikować
+    na warunkach <b>Powszechnej Licencji Publicznej GNU (GNU GPL) w wersji 2</b>,
+    opublikowanej przez Free Software Foundation.</p>
+  <p>Program rozpowszechniany jest w nadziei, że okaże się przydatny, ale <b>BEZ ŻADNEJ
+    GWARANCJI</b>, nawet domyślnej gwarancji PRZYDATNOŚCI HANDLOWEJ albo PRZYDATNOŚCI
+    DO OKREŚLONYCH ZASTOSOWAŃ. Szczegóły znajdziesz w treści licencji.</p>
+  <p>
+    <a href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html"
+       target="_blank" rel="noopener">Pełny tekst GNU GPL v2 (gnu.org)</a>
+    ·
+    <a href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt"
+       target="_blank" rel="noopener">wersja tekstowa</a>
+  </p>
+  <p>Aplikacja działa w całości lokalnie i nie ładuje żadnych zewnętrznych zasobów —
+    kroje pisma są systemowe, a odczyt plików XLSX realizuje wbudowany czytnik oparty
+    na natywnym rozpakowywaniu ZIP. Jedyne połączenie sieciowe to świadome pobranie cen
+    z API PSE po naciśnięciu przycisku. Dane pomiarowe nie opuszczają urządzenia,
+    aplikacja nie używa ciasteczek. Jedyne, co może zostać zapisane na dysku, to pobrane
+    ceny RCE — trafiają do pamięci lokalnej przeglądarki, gdy zaznaczysz odpowiednią opcję,
+    i można je w każdej chwili usunąć przyciskiem. Odczyty z licznika nie są nigdzie
+    zapisywane ani wysyłane.</p>
+  <p class="spdx">SPDX-License-Identifier: GPL-2.0-only</p>
+</footer>
+
+</div>
+
+<script>
+/* ============ czytnik XLSX ============ */
+// Własny, żeby plik nie ciągnął nic z sieci i nie mieszał licencji.
+/* Minimalny czytnik XLSX: ZIP + XML, bez zewnętrznych bibliotek.
+   Rozpakowywanie robi natywny DecompressionStream('deflate-raw'). */
+async function zipEntries(buf){
+  const dv=new DataView(buf), u8=new Uint8Array(buf);
+  let eocd=-1;
+  for(let i=u8.length-22;i>=Math.max(0,u8.length-65558);i--)
+    if(dv.getUint32(i,true)===0x06054b50){eocd=i;break}
+  if(eocd<0) throw new Error('to nie jest plik XLSX — jeśli masz stary format .xls, otwórz go i zapisz jako .xlsx');
+  const n=dv.getUint16(eocd+10,true);
+  let off=dv.getUint32(eocd+16,true);
+  const out={};
+  const dec=new TextDecoder();
+  for(let k=0;k<n;k++){
+    if(dv.getUint32(off,true)!==0x02014b50) break;
+    const method=dv.getUint16(off+10,true);
+    const csize=dv.getUint32(off+20,true);
+    const nameLen=dv.getUint16(off+28,true);
+    const extraLen=dv.getUint16(off+30,true);
+    const cmtLen=dv.getUint16(off+32,true);
+    const lho=dv.getUint32(off+42,true);
+    const name=dec.decode(u8.subarray(off+46,off+46+nameLen));
+    const lnameLen=dv.getUint16(lho+26,true), lextraLen=dv.getUint16(lho+28,true);
+    const start=lho+30+lnameLen+lextraLen;
+    out[name]={method,raw:u8.subarray(start,start+csize)};
+    off+=46+nameLen+extraLen+cmtLen;
+  }
+  return out;
+}
+async function zipText(entries,name){
+  const f=entries[name]; if(!f) return null;
+  if(f.method===0) return new TextDecoder('utf-8').decode(f.raw);
+  if(f.method!==8) throw new Error('nieobsługiwana kompresja w archiwum');
+  if(typeof DecompressionStream==='undefined')
+    throw new Error('ta przeglądarka nie obsługuje rozpakowywania ZIP — potrzebna nowsza wersja');
+  const s=new Blob([f.raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new TextDecoder('utf-8').decode(await new Response(s).arrayBuffer());
+}
+function colIndex(ref){
+  let n=0;
+  for(let i=0;i<ref.length;i++){
+    const c=ref.charCodeAt(i);
+    if(c<65||c>90) break;
+    n=n*26+(c-64);
+  }
+  return n-1;
+}
+function xmlDoc(text){
+  const d=new DOMParser().parseFromString(text,'application/xml');
+  if(d.getElementsByTagName('parsererror').length) throw new Error('uszkodzony XML w arkuszu');
+  return d;
+}
+function sharedStrings(text){
+  if(!text) return [];
+  const doc=xmlDoc(text), out=[];
+  for(const si of doc.getElementsByTagName('si')){
+    let s='';
+    for(const t of si.getElementsByTagName('t')) s+=t.textContent;
+    out.push(s);
+  }
+  return out;
+}
+// Zwraca { nazwaArkusza: [[komórka,...],...] } — wartości jako tekst.
+async function readXlsx(buf){
+  const z=await zipEntries(buf);
+  const wbText=await zipText(z,'xl/workbook.xml');
+  if(!wbText) throw new Error('brak xl/workbook.xml — to nie jest skoroszyt XLSX');
+  const rels=await zipText(z,'xl/_rels/workbook.xml.rels');
+  const relMap={};
+  if(rels) for(const r of xmlDoc(rels).getElementsByTagName('Relationship'))
+    relMap[r.getAttribute('Id')]=r.getAttribute('Target').replace(/^\/?xl\//,'').replace(/^\//,'');
+  const shared=sharedStrings(await zipText(z,'xl/sharedStrings.xml'));
+  const wb=xmlDoc(wbText), sheets={};
+  let idx=0;
+  for(const sh of wb.getElementsByTagName('sheet')){
+    idx++;
+    const name=sh.getAttribute('name');
+    const rid=sh.getAttribute('r:id')||sh.getAttributeNS
+      &&sh.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id');
+    const target=(rid&&relMap[rid])||('worksheets/sheet'+idx+'.xml');
+    const text=await zipText(z,'xl/'+target);
+    if(!text){sheets[name]=[];continue}
+    const doc=xmlDoc(text), rows=[];
+    for(const row of doc.getElementsByTagName('row')){
+      const arr=[];
+      for(const c of row.getElementsByTagName('c')){
+        const ref=c.getAttribute('r')||'';
+        const at=ref?colIndex(ref):arr.length;
+        const t=c.getAttribute('t');
+        let val='';
+        if(t==='inlineStr'){
+          for(const n of c.getElementsByTagName('t')) val+=n.textContent;
+        }else{
+          const v=c.getElementsByTagName('v')[0];
+          if(v){
+            val=v.textContent;
+            if(t==='s') val=shared[+val]??'';
+          }
+        }
+        while(arr.length<at) arr.push('');
+        arr[at]=val;
+      }
+      const r=row.getAttribute('r');
+      const at=r?+r-1:rows.length;
+      while(rows.length<at) rows.push([]);
+      rows[at]=arr;
+    }
+    sheets[name]=rows;
+  }
+  return sheets;
+}
+
+/* ============ strefy G12 ============ */
+function isNight(month,hour){
+  const winter=(month>=10||month<=3);
+  if(winter) return (hour<6)||(hour>=13&&hour<15)||(hour>=22);
+  return (hour<6)||(hour>=15&&hour<17)||(hour>=22);
+}
+(function(){const r=document.getElementById('ribbon');
+  for(let h=0;h<24;h++){const i=document.createElement('i');
+    i.className=isNight(1,h)?'n':'d';i.title=String(h).padStart(2,'0')+':00';r.appendChild(i);}})();
+
+/* ============ pomocnicze ============ */
+const PL_MONTHS=['styczeń','luty','marzec','kwiecień','maj','czerwiec','lipiec',
+                 'sierpień','wrzesień','październik','listopad','grudzień'];
+const fmt=(n,d=2)=>Number(n).toLocaleString('pl-PL',{minimumFractionDigits:d,maximumFractionDigits:d});
+const zl=n=>fmt(n,2)+' zł';
+function num(v){
+  if(typeof v==='number') return v;
+  if(v==null) return 0;
+  let s=String(v).replace(/\u00a0|\s/g,'');
+  if(s==='') return 0;
+  if(s.includes(',')) s=s.replace(/\./g,'').replace(',','.');
+  const n=parseFloat(s); return isFinite(n)?n:0;
+}
+function P(id){const e=document.getElementById(id);return parseFloat(String(e.value).replace(',','.'))||0;}
+
+/* ============ parsowanie zużycia ============ */
+async function parseUsage(buf,name){
+  const sheets=await readXlsx(buf);
+  const rows=sheets['Dane']||sheets[Object.keys(sheets)[0]];
+  if(!rows||!rows.length) throw new Error('brak arkusza z danymi');
+  const head=(rows[0]||[]).map(x=>String(x).trim());
+  const iDate=head.findIndex(h=>/dataodczytu/i.test(h));
+  const iDir=head.findIndex(h=>/kierunek/i.test(h));
+  const hCols=[]; for(let k=1;k<=24;k++)
+    hCols.push(head.findIndex(h=>h.toUpperCase()==='H'+String(k).padStart(2,'0')));
+  if(iDate<0||iDir<0||hCols.some(i=>i<0)) throw new Error('nieoczekiwany układ kolumn');
+  const days=new Map(); let given=0,taken=0;
+  for(let r=1;r<rows.length;r++){
+    const row=rows[r]; if(!row||!row[iDate]) continue;
+    const dir=String(row[iDir]||'');
+    const d=String(row[iDate]).replace(/\D/g,''); if(d.length!==8) continue;
+    const vals=hCols.map(i=>num(row[i]));
+    if(/zbilansowan/i.test(dir)) days.set(d,vals);
+    else if(/oddana/i.test(dir)) given+=vals.reduce((a,b)=>a+b,0);
+    else if(/pobrana/i.test(dir)) taken+=vals.reduce((a,b)=>a+b,0);
+  }
+  if(!days.size) throw new Error('nie znaleziono wierszy „En. Czynna zbilansowana”');
+  const keys=[...days.keys()].sort();
+  const y=+keys[0].slice(0,4), m=+keys[0].slice(4,6);
+  const series=[],dates=[];
+  for(const k of keys){dates.push(k.slice(0,4)+'-'+k.slice(4,6)+'-'+k.slice(6,8));series.push(...days.get(k));}
+  return {file:name,key:`${y}-${String(m).padStart(2,'0')}`,year:y,month:m,
+          label:`${PL_MONTHS[m-1]} ${y}`,series,dates,nDays:keys.length,pvGiven:given,meterTaken:taken};
+}
+
+/* ============ RCE ============ */
+const RCE={};      // 'YYYY-MM-DD' -> [24] zł/MWh
+let rceSource={};  // 'YYYY-MM' -> etykieta źródła
+
+function addRcePoint(date,hour,val){
+  if(!RCE[date]) RCE[date]={sum:new Float64Array(24),cnt:new Int32Array(24)};
+  RCE[date].sum[hour]+=val; RCE[date].cnt[hour]++;
+}
+function rceHour(date,hour){
+  const r=RCE[date]; if(!r||!r.cnt[hour]) return null;
+  return r.sum[hour]/r.cnt[hour];
+}
+function monthCoverage(m){
+  let have=0; for(const d of m.dates) for(let h=0;h<24;h++) if(rceHour(d,h)!==null) have++;
+  return have/(m.dates.length*24);
+}
+
+/* --- trwały zapis cen: pamięć przeglądarki albo plik --- */
+const LS_KEY='rce-cache-v1';
+function lsOk(){
+  try{localStorage.setItem('__t','1');localStorage.removeItem('__t');return true}
+  catch(e){return false}   // np. plik otwarty z file:// albo content:// ma pochodzenie nieprzezroczyste
+}
+function rceExport(){
+  const out={};
+  for(const d of Object.keys(RCE)){
+    const r=RCE[d], a=[]; let any=false;
+    for(let h=0;h<24;h++){
+      const v=r.cnt[h]?Math.round(r.sum[h]/r.cnt[h]*100)/100:null;
+      a.push(v); if(v!==null) any=true;
+    }
+    if(any) out[d]=a;
+  }
+  return {v:1,zapis:new Date().toISOString(),src:rceSource,rce:out};
+}
+function rceImport(obj){
+  if(!obj||!obj.rce) throw new Error('to nie jest zapis cen RCE');
+  let days=0;
+  for(const d of Object.keys(obj.rce)){
+    const arr=obj.rce[d];
+    if(!Array.isArray(arr)) continue;
+    const sum=new Float64Array(24), cnt=new Int32Array(24);
+    arr.forEach((v,h)=>{if(v!==null&&v!==undefined&&h<24){sum[h]=+v;cnt[h]=1}});
+    RCE[d]={sum,cnt}; days++;
+  }
+  if(obj.src) Object.assign(rceSource,obj.src);
+  return days;
+}
+function rceSave(){
+  if(!document.getElementById('rceCache').checked||!lsOk()) return;
+  try{localStorage.setItem(LS_KEY,JSON.stringify(rceExport()))}catch(e){/* brak miejsca */}
+}
+function rceRestore(){
+  if(!lsOk()) return 0;
+  try{const t=localStorage.getItem(LS_KEY); return t?rceImport(JSON.parse(t)):0}
+  catch(e){return 0}
+}
+function forgetDays(year,month){          // przed ponownym pobraniem, żeby nie uśredniać ze starym
+  const pad=n=>String(n).padStart(2,'0');
+  const last=new Date(Date.UTC(year,month,0)).getUTCDate();
+  for(let d=1;d<=last;d++) delete RCE[`${year}-${pad(month)}-${pad(d)}`];
+}
+
+async function fetchRceForMonth(m){
+  forgetDays(m.year,m.month);
+  const last=new Date(Date.UTC(m.year,m.month,0)).getUTCDate();
+  const pad=n=>String(n).padStart(2,'0');
+  let got=0;
+  for(let a=1;a<=last;a+=7){
+    const b=Math.min(a+6,last);
+    const from=`${m.year}-${pad(m.month)}-${pad(a)}`, to=`${m.year}-${pad(m.month)}-${pad(b)}`;
+    const url=encodeURI(`https://api.raporty.pse.pl/api/rce-pln?$filter=business_date ge '${from}' and business_date le '${to}'`);
+    const res=await fetch(url);
+    if(!res.ok) throw new Error('PSE odpowiedziało kodem '+res.status);
+    const js=await res.json();
+    for(const rec of (js.value||js||[])){
+      const date=(rec.business_date||String(rec.dtime||'').slice(0,10)).slice(0,10);
+      let hour=null;
+      const per=String(rec.period||rec.udtczas_oreb||'');
+      let mm=per.match(/^(\d{1,2}):(\d{2})/);
+      if(mm) hour=+mm[1];
+      else{const dt=String(rec.dtime||rec.udtczas||'');
+           const m2=dt.match(/[ T](\d{1,2}):(\d{2})/); if(m2) hour=+m2[1];}
+      const v=rec.rce_pln;
+      if(date&&hour!==null&&v!=null&&isFinite(+v)){addRcePoint(date,hour,+v);got++;}
+    }
+  }
+  if(!got) throw new Error('PSE nie zwróciło danych dla tego miesiąca');
+  rceSource[m.key]='PSE';
+}
+
+function parseRceFile(text,name){
+  // tolerancyjny parser: szuka daty, godziny i liczby w każdym wierszu
+  const lines=text.split(/\r?\n/); let got=0;
+  for(const line of lines){
+    if(!line.trim()) continue;
+    const cells=line.split(/[;\t,](?=(?:[^"]*"[^"]*")*[^"]*$)/).map(c=>c.replace(/^"|"$/g,'').trim());
+    let date=null,hour=null,val=null;
+    for(const c of cells){
+      let d=c.match(/^(\d{4})-(\d{2})-(\d{2})/)||c.match(/^(\d{2})[.\/](\d{2})[.\/](\d{4})/);
+      if(d&&!date) date = d[1].length===4 ? `${d[1]}-${d[2]}-${d[3]}` : `${d[3]}-${d[2]}-${d[1]}`;
+    }
+    for(const c of cells){
+      const t=c.match(/^(\d{1,2}):(\d{2})/);
+      if(t&&hour===null){hour=+t[1];break}
+    }
+    if(hour===null) for(const c of cells){
+      if(/^\d{1,2}$/.test(c)&&+c>=1&&+c<=24){hour=+c-1;break}
+    }
+    for(let i=cells.length-1;i>=0;i--){
+      const n=num(cells[i]);
+      if(cells[i]!==''&&/[\d]/.test(cells[i])&&Math.abs(n)<5000&&!/^\d{4}-\d{2}/.test(cells[i])
+         &&!/^\d{1,2}:\d{2}/.test(cells[i])){val=n;break}
+    }
+    if(date&&hour!==null&&val!==null){addRcePoint(date,hour,val);got++;}
+  }
+  if(!got) throw new Error(name+' — nie rozpoznano żadnego wiersza');
+}
+
+/* ============ symulacja ============ */
+// Magazyn prowadzi dwa salda: pv (energia ze słońca, wolno ją sprzedać)
+// i gr (energia kupiona z sieci, wolno ją tylko zużyć w domu).
+//
+// Zapas PV dzieli się na dwie transze:
+//  · REZERWA — tyle, ile dom zużyje, zanim PV znów naładuje magazyn.
+//    Sprzedajemy ją tylko wtedy, gdy cena bije autokonsumpcję, bo inaczej
+//    trzeba by tę energię odkupić z sieci po cenie detalicznej.
+//  · NADWYŻKA — reszta. Jej alternatywą nie jest autokonsumpcja, tylko
+//    oddanie jutro w południe po cenie dołka albo brak miejsca na produkcję.
+//    Sprzedajemy ją w najlepiej płatnej godzinie przed kolejnym naładowaniem,
+//    już bez progu opłacalności.
+function lookahead(series,prices,i,cap,horizon){
+  let load=0,surplus=0,peak=prices[i];
+  const n=series.length;
+  for(let j=i+1;j<n&&j<i+horizon;j++){
+    if(prices[j]>peak) peak=prices[j];
+    const v=series[j];
+    if(v>0){ load+=v; if(load>=cap) return {res:cap,peak}; }
+    else   { surplus-=v; if(surplus>=cap) break; }
+  }
+  return {res:Math.min(load,cap),peak};
+}
+// Ile energii z sieci warto dokupić w nocy: tylko tyle, ile dom pobierze
+// w nadchodzącym bloku drogiej strefy ponad to, co pokryje własna produkcja.
+// Zimą wychodzi cała pojemność, latem prawie zero — dzięki temu rano
+// zostaje miejsce na PV, zamiast blokować magazyn energią kupioną z sieci.
+function gridNeed(month,series,i,cap,horizon){
+  let need=0,seenDay=false;
+  for(let j=i+1;j<series.length&&j<i+horizon;j++){
+    if(!isNight(month,j%24)){
+      seenDay=true;
+      if(series[j]>0){ need+=series[j]; if(need>=cap) return cap; }
+    }else if(seenDay) break;
+  }
+  return Math.min(need,cap);
+}
+function simulate(month,series,cap,powr,effOne,o,init){
+  let pv=0,gr=0;
+  if(init&&cap>0){                                      // stan magazynu z poprzedniego miesiąca
+    pv=Math.max(0,init.pv||0); gr=Math.max(0,init.gr||0);
+    const tot=pv+gr; if(tot>cap){pv*=cap/tot; gr*=cap/tot;}
+  }
+  let impDay=0,impNight=0,expPv=0,expBat=0,expSpare=0,thru=0;
+  const grid=new Array(series.length);
+  const pvRes=Math.min(o.pvRes,cap);
+  for(let i=0;i<series.length;i++){
+    const h=i%24,night=isNight(month,h),v=series[i];
+    let g=0,pw=powr;
+    const price=o.prices[i]/1000;                       // zł/kWh
+    const beatsHome = o.autoThr ? price*o.corr>o.retailDay : o.prices[i]>=o.thr;
+
+    if(v<0){                                            // nadwyżka PV w tej godzinie
+      const s=-v; let in_=0;
+      if(cap>0&&!(o.sell&&beatsHome)) in_=Math.min(s,pw,(cap-pv-gr)/effOne);
+      pv+=in_*effOne; thru+=in_; pw-=in_;
+      const e=s-in_; expPv+=e; g-=e;
+    }else{
+      if(cap>0&&!night){                                // dom ma pierwszeństwo
+        const dis=Math.min(v,pw,(pv+gr)*effOne);
+        const fromGr=Math.min(gr,dis/effOne);           // najpierw energia z sieci
+        gr-=fromGr; pv-=(dis/effOne-fromGr);
+        thru+=dis; pw-=dis; g+=v-dis;
+      }else g+=v;
+      if(night){
+        impNight+=g;
+        if(cap>0){                                      // nocne ładowanie z sieci
+          const need=gridNeed(month,series,i,cap,o.horizon);
+          const room=Math.min((need-pv-gr)/effOne,(cap-pvRes-pv-gr)/effOne);
+          const ch=Math.min(pw,Math.max(0,room));
+          if(ch>0){gr+=ch*effOne;impNight+=ch;thru+=ch;pw-=ch;}
+        }
+      }else impDay+=g;
+    }
+
+    if(o.sell&&cap>0&&pv>0&&pw>0){
+      const la=lookahead(series,o.prices,i,cap,o.horizon);
+      const needPv=Math.max(0,la.res-gr*effOne);        // ile PV zostawić dla domu
+      const spare=Math.max(0,pv*effOne-needPv);
+      let out=0;
+      if(spare>0 && o.prices[i]>=o.floor && o.prices[i]>=o.peakF*la.peak){
+        out=Math.min(spare,pw); expSpare+=out;          // transza: nadwyżka
+      }
+      if(beatsHome){                                    // transza: rezerwa
+        const more=Math.min(pv*effOne-out,pw-out);
+        if(more>0) out+=more;
+      }
+      out=Math.min(out,pw,pv*effOne);
+      if(out>0){pv-=out/effOne;thru+=out;pw-=out;expBat+=out;g-=out;}
+    }
+    grid[i]=g;
+  }
+  return {impDay,impNight,imp:impDay+impNight,expPv,expBat,expSpare,
+          exp:expPv+expBat,soc:pv+gr,pv,gr,thru,grid};
+}
+
+function depositFor(m,grid,prices,corr){
+  let dep=0,kwh=0;
+  for(let i=0;i<grid.length;i++){
+    if(grid[i]>=0) continue;
+    const e=-grid[i], p=prices[i];
+    dep+=e*p/1000*corr; kwh+=e;
+  }
+  return {dep,kwh,avg:kwh>0?dep/kwh:0};
+}
+/* ============ przesunięcie zużycia na noc ============ */
+// Zdejmuje z drogich godzin zadaną dobową ilość kWh i dokłada ją w strefie
+// taniej razem z dodatkowymi stratami. Zabiera tylko z godzin z realnym
+// poborem — tam, gdzie pracuje PV, nie ma czego przenosić.
+function shiftSeries(m,perDay,lossPerDay){
+  if(perDay<=0&&lossPerDay<=0) return {series:m.series,moved:0,added:0};
+  const s=m.series.slice(); let moved=0,added=0;
+  for(let d=0;d<m.nDays;d++){
+    const dayIdx=[],nightIdx=[];
+    for(let h=0;h<24;h++)(isNight(m.month,h)?nightIdx:dayIdx).push(d*24+h);
+    let avail=0; for(const i of dayIdx) if(s[i]>0) avail+=s[i];
+    const take=Math.min(perDay,avail);
+    if(take>0&&avail>0){const k=take/avail; for(const i of dayIdx) if(s[i]>0) s[i]-=s[i]*k;}
+    const frac=perDay>0?take/perDay:1;               // straty proporcjonalne do przeniesionej energii
+    const add=take+lossPerDay*frac;
+    if(add>0&&nightIdx.length){
+      const per=add/nightIdx.length;
+      for(const i of nightIdx) s[i]+=per;
+    }
+    moved+=take; added+=add;
+  }
+  return {series:s,moved,added};
+}
+function shiftParams(key){
+  const a=document.getElementById('shift_'+key), b=document.getElementById('loss_'+key);
+  return {per:a?(parseFloat(String(a.value).replace(',','.'))||0):0,
+          loss:b?(parseFloat(String(b.value).replace(',','.'))||0):0};
+}
+
+function priceArray(m,clip,flat){
+  const out=new Float64Array(m.series.length);
+  for(let d=0;d<m.dates.length;d++)for(let h=0;h<24;h++){
+    let p=rceHour(m.dates[d],h); if(p===null) p=flat;
+    if(clip&&p<0) p=0;
+    out[d*24+h]=p;
+  }
+  return out;
+}
+
+/* ============ depozyt: koszyki FIFO z wygasaniem ============ */
+// Depozyt niewykorzystany przez 12 miesięcy przepada, a sprzedawca zwraca
+// najwyżej 20% wartości energii wprowadzonej w tym okresie. Bez tego
+// mechanizmu saldo przy nadwyżkowym PV rosłoby w nieskończoność i zapętlony
+// rok nigdy nie osiągnąłby stanu ustalonego.
+function depNew(){return {b:[]}}
+function depClone(D){return {b:D.b.map(x=>({orig:x.orig,rem:x.rem,age:x.age}))}}
+function depBal(D){return D.b.reduce((a,x)=>a+x.rem,0)}
+function depAdd(D,v){if(v>1e-9) D.b.push({orig:v,rem:v,age:0})}
+function depAge(D){                      // na początku każdego miesiąca
+  let refund=0;
+  D.b.forEach(x=>x.age++);
+  D.b=D.b.filter(x=>{
+    if(x.age>12){refund+=Math.min(x.rem,0.20*x.orig); return false}
+    return true;
+  });
+  return refund;
+}
+function depUse(D,amount){               // najstarsze koszyki najpierw
+  let used=0;
+  for(const x of D.b){
+    if(used>=amount-1e-9) break;
+    const t=Math.min(x.rem,amount-used); x.rem-=t; used+=t;
+  }
+  D.b=D.b.filter(x=>x.rem>1e-9);
+  return used;
+}
+
+/* ============ wspólna tabela wyników ============ */
+// Ten sam zestaw kolumn i te same szerokości w każdym miesiącu i w podsumowaniu,
+// żeby wiersze dało się porównywać wzrokiem przewijając stronę.
+const COLS=[
+  ['Wariant','150px'],['Pobór kWh','75px'],['Tania strefa','120px'],['Odd. z PV','85px'],
+  ['Odd. z magaz.','105px'],['Depozyt zł','95px'],['zł/kWh','75px'],
+  ['Do zapłaty zł','110px'],['vs G11 zł','100px']];
+function resultTable(items,footer){
+  const min=Math.min(...items.map(r=>r.pay));
+  const base=items[0].pay;
+  return `<table>
+    <colgroup>${COLS.map(c=>`<col style="width:${c[1]}">`).join('')}</colgroup>
+    <thead><tr>${COLS.map(c=>`<th>${c[0]}</th>`).join('')}</tr></thead>
+    <tbody>${items.map((r,i)=>{
+      const d=r.pay-base, odd=r.expPv+r.expBat;
+      return `<tr${r.pay===min?' class="best"':''}>
+        <td title="${r.name}">${r.name}</td>
+        <td>${fmt(r.imp,0)}</td>
+        <td>${r.g12?fmt(r.impNight,0)+' <span style="color:var(--ink-dim)">('+
+            fmt(100*r.impNight/Math.max(r.imp,.001),0)+'%)</span>':'—'}</td>
+        <td>${fmt(r.expPv,1)}</td>
+        <td>${r.cap>0?fmt(r.expBat,1):'—'}</td>
+        <td>+${fmt(r.dep,2)}</td>
+        <td>${odd>0?fmt(r.dep/odd,3):'—'}</td>
+        <td class="big">${fmt(r.pay,2)}</td>
+        <td>${i===0?'—':(d<0?'−':'+')+fmt(Math.abs(d),2)}</td></tr>`}).join('')}</tbody>
+    <tfoot><tr><td colspan="${COLS.length}">${footer}</td></tr></tfoot></table>`;
+}
+
+/* ============ koszty ============ */
+function cost(sim,isG12){
+  const add=P('addv');
+  const energy=isG12?sim.impDay*P('eG12d')+sim.impNight*P('eG12n'):sim.imp*P('eG11');
+  const dist  =isG12?sim.impDay*P('sG12d')+sim.impNight*P('sG12n'):sim.imp*P('sG11');
+  return {energy,dist,extras:sim.imp*add,fixed:(isG12?P('fsG12'):P('fsG11'))+P('fAb')+P('fMoc')};
+}
+
+/* ============ wczytywanie ============ */
+let MONTHS=[];
+const drop=document.getElementById('drop'),inp=document.getElementById('files');
+const chips=document.getElementById('chips'),err=document.getElementById('err');
+drop.onclick=()=>inp.click();
+['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('hot')}));
+['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('hot')}));
+drop.addEventListener('drop',ev=>loadUsage(ev.dataTransfer.files));
+inp.onchange=()=>loadUsage(inp.files);
+
+async function loadUsage(list){
+  err.textContent=''; const bad=[];
+  for(const f of list){
+    try{const m=await parseUsage(await f.arrayBuffer(),f.name);
+        MONTHS=MONTHS.filter(x=>x.key!==m.key); MONTHS.push(m);}
+    catch(e){bad.push(f.name+' — '+e.message)}
+  }
+  MONTHS.sort((a,b)=>a.key<b.key?-1:1);
+  if(bad.length) err.textContent='Nie udało się wczytać:\n'+bad.join('\n');
+  renderChips(); document.getElementById('run').disabled=!MONTHS.length;
+  if(MONTHS.length){document.getElementById('cfg').open=false; run();}
+}
+function canLoop(){
+  if(MONTHS.length!==12) return false;
+  const seen=new Set(MONTHS.map(m=>m.month));
+  return seen.size===12;
+}
+function renderLoopToggle(){
+  const box=document.getElementById('loopYear'), lbl=document.getElementById('loopLbl');
+  const ok=canLoop();
+  box.disabled=!ok;
+  if(!ok) box.checked=false;
+  document.getElementById('loopWrap').style.opacity=ok?'1':'.45';
+  lbl.textContent=ok
+    ? 'zapętl rok — ostatni miesiąc poprzedza pierwszy'
+    : `zapętl rok — wymaga kompletu 12 miesięcy (masz ${MONTHS.length})`;
+}
+function renderShiftGrid(){
+  const g=document.getElementById('shiftGrid');
+  if(!MONTHS.length){g.innerHTML='<div class="note">Wczytaj pliki, żeby ustawić przesunięcie.</div>';return}
+  g.innerHTML=MONTHS.map(m=>{
+    const cur=shiftParams(m.key);
+    const a=document.getElementById('shift_'+m.key), b=document.getElementById('loss_'+m.key);
+    return `<div class="shiftRow">
+      <span class="shiftName">${m.label}</span>
+      <span><label>przeniesione kWh/dobę</label>
+        <input id="shift_${m.key}" value="${a?a.value:cur.per}"></span>
+      <span><label>dodatkowe straty kWh/dobę</label>
+        <input id="loss_${m.key}" value="${b?b.value:cur.loss}"></span>
+    </div>`;
+  }).join('');
+}
+function renderChips(){
+  chips.innerHTML=MONTHS.map(m=>
+    `<span class="chip"><b>${m.label}</b> · ${m.nDays} dni · ${m.series.length} godz.</span>`).join('');
+  renderLoopToggle();
+  renderShiftGrid();
+  renderRceChips();
+}
+function renderRceChips(){
+  const c=document.getElementById('rceChips');
+  c.innerHTML=MONTHS.map(m=>{
+    const cov=monthCoverage(m), src=rceSource[m.key];
+    const cls=cov>0.99?'ok':(cov>0?'warn':'');
+    const txt=cov>0.99?`RCE ${src||'plik'}`
+             :cov>0?`RCE ${src||'plik'} — ${fmt(cov*100,0)}% godzin`
+             :'cena zastępcza';
+    return `<span class="chip ${cls}"><b>${m.label}</b> · ${txt}</span>`;
+  }).join('');
+}
+
+/* --- RCE: pobieranie i pliki --- */
+const rceErr=document.getElementById('rceErr');
+document.getElementById('pickRce').onclick=()=>document.getElementById('rceFiles').click();
+document.getElementById('rceFiles').onchange=async e=>{
+  rceErr.textContent=''; const bad=[];
+  for(const f of e.target.files){
+    try{
+      if(/\.json$/i.test(f.name)){
+        const n=rceImport(JSON.parse(await f.text()));
+        rceErr.textContent='Wczytano ceny dla '+n+' dni z pliku.';
+      }else if(/\.(xlsx?|xlsm)$/i.test(f.name)){
+        const sheets=await readXlsx(await f.arrayBuffer());
+        const rows=sheets[Object.keys(sheets)[0]]||[];
+        parseRceFile(rows.map(r=>(r||[]).join(';')).join('\n'),f.name);
+      }else parseRceFile(await f.text(),f.name);
+      rceSource[''] = 'plik';
+    }catch(ex){bad.push(ex.message)}
+  }
+  MONTHS.forEach(m=>{if(monthCoverage(m)>0) rceSource[m.key]=rceSource[m.key]||'plik';});
+  if(bad.length) rceErr.textContent=bad.join('\n');
+  rceSave(); renderRceChips(); if(MONTHS.length) run();
+};
+document.getElementById('fetchRce').onclick=async ()=>{
+  rceErr.textContent='';
+  const btn=document.getElementById('fetchRce'), old=btn.textContent;
+  btn.disabled=true;
+  const bad=[];
+  for(const m of MONTHS){
+    btn.textContent='Pobieram '+m.label+'…';
+    try{await fetchRceForMonth(m)}catch(e){bad.push(m.label+' — '+e.message)}
+  }
+  btn.textContent=old; btn.disabled=false;
+  if(bad.length) rceErr.textContent='Nie udało się pobrać:\n'+bad.join('\n')+
+    '\nPobierz raport RCE‑PLN ręcznie z raporty.pse.pl i wgraj plik.';
+  rceSave(); renderRceChips(); if(MONTHS.length) run();
+};
+
+/* --- zapis do pliku, czyszczenie, odtworzenie przy starcie --- */
+document.getElementById('saveRce').onclick=()=>{
+  const days=Object.keys(RCE).length;
+  if(!days){rceErr.textContent='Nie ma jeszcze żadnych cen do zapisania.';return}
+  const blob=new Blob([JSON.stringify(rceExport())],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='ceny-rce.json';
+  a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  rceErr.textContent='Zapisano ceny dla '+days+' dni. Plik wgrasz z powrotem przyciskiem „Wgraj plik RCE”.';
+};
+document.getElementById('clearRce').onclick=()=>{
+  Object.keys(RCE).forEach(k=>delete RCE[k]);
+  rceSource={};
+  try{localStorage.removeItem(LS_KEY)}catch(e){}
+  rceErr.textContent='Zapamiętane ceny usunięte.';
+  renderRceChips(); if(MONTHS.length) run();
+};
+document.getElementById('rceCache').onchange=e=>{
+  if(e.target.checked) rceSave();
+  else{try{localStorage.removeItem(LS_KEY)}catch(err){}}
+};
+(function initRceCache(){
+  const box=document.getElementById('rceCache'), lbl=document.getElementById('rceCacheLbl');
+  if(!lsOk()){
+    box.checked=false; box.disabled=true;
+    document.getElementById('clearRce').disabled=true;
+    lbl.textContent='pamięć przeglądarki niedostępna dla tego pliku — użyj zapisu do pliku';
+    return;
+  }
+  const days=rceRestore();
+  if(days) lbl.textContent=`zapamiętuj pobrane ceny w tej przeglądarce (odtworzono ${days} dni)`;
+})();
+
+/* ============ przeliczenie ============ */
+document.getElementById('run').onclick=run;
+document.addEventListener('change',e=>{
+  if(e.target.tagName==='INPUT'&&e.target.type!=='file'&&MONTHS.length) run();});
+
+// Jeden przebieg przez wszystkie wczytane miesiące, startujący z zadanym
+// saldem depozytu i stanem magazynu. Zwraca wyniki i stan końcowy.
+function onePass(variants,opt0,cfg,startDep,startBat){
+  const dep={},bat={},totals={},months=[];
+  variants.forEach(v=>{
+    dep[v.id]=startDep[v.id]?depClone(startDep[v.id]):depNew();
+    bat[v.id]=startBat[v.id]||{pv:0,gr:0};
+    totals[v.id]={pay:0,imp:0,impNight:0,exp:0,expPv:0,expBat:0,acc:0,refund:0};
+  });
+  MONTHS.forEach(m=>{
+    const prices=priceArray(m,cfg.clip,cfg.flat);
+    const opt=Object.assign({},opt0,{prices});
+    const sp=cfg.shiftOn?shiftParams(m.key):{per:0,loss:0};
+    const sh=shiftSeries(m,sp.per,sp.loss);
+    const rows=[],grids={};
+    variants.forEach(v=>{
+      const series=v.shift?sh.series:m.series;
+      const s=simulate(m.month,series,v.cap,v.pow,cfg.effOne,opt,bat[v.id]);
+      bat[v.id]={pv:s.pv,gr:s.gr};
+      const c=cost(s,v.g12);
+      const refund=depAge(dep[v.id]);                       // przeterminowane koszyki
+      const eBill=cfg.depGross?c.energy*cfg.vat:c.energy;   // co depozyt może pomniejszyć
+      const used=depUse(dep[v.id],eBill);
+      const d=depositFor(m,s.grid,prices,cfg.corr); depAdd(dep[v.id],d.dep);
+      const rest=(c.dist+c.extras+c.fixed)*cfg.vat;
+      const pay=(cfg.depGross?(eBill-used):(eBill-used)*cfg.vat)+rest-refund;
+      const t=totals[v.id];
+      t.pay+=pay; t.imp+=s.imp; t.impNight+=s.impNight; t.exp+=s.exp;
+      t.expPv+=s.expPv; t.expBat+=s.expBat; t.acc+=d.dep; t.refund+=refund;
+      rows.push({name:v.name,g12:v.g12,cap:v.cap,imp:s.imp,impNight:s.impNight,
+                 expPv:s.expPv,expBat:s.expBat,dep:d.dep,pay,used,refund,s});
+      grids[v.id]=s.grid;
+    });
+    months.push({m,rows,grids,prices,sh});
+  });
+  return {dep,bat,totals,months};
+}
+
+function run(){
+  const vat=1+P('vat')/100, effOne=Math.sqrt(P('eff')/100), corr=P('corr');
+  const cfg={vat,effOne,corr,
+    clip:document.getElementById('clipNeg').checked, flat:P('flatRce'),
+    depGross:document.getElementById('depGross').checked,
+    shiftG11:document.getElementById('shiftG11').checked,
+    shiftOn:document.getElementById('shiftOn').checked};
+  document.getElementById('shiftGrid').style.opacity=cfg.shiftOn?'1':'.4';
+  document.getElementById('shiftG11').disabled=!cfg.shiftOn;
+  const capA=P('capA'),powA=P('powA'),capB=P('capB'),powB=P('powB');
+  const opt0={sell:document.getElementById('sell').checked,
+              autoThr:document.getElementById('autoThr').checked,
+              thr:P('thr'), pvRes:P('pvRes'), corr,
+              floor:P('floor'), peakF:P('peakF')/100, horizon:Math.max(6,P('horizon')),
+              retailDay:(P('eG12d')+P('sG12d')+P('addv'))*vat};
+  // Warianty z przesunięciem dochodzą jako osobne wiersze, żeby w jednej
+  // tabeli stały obok siebie te same konfiguracje bez i z nocnym doładowaniem.
+  const anyShift=cfg.shiftOn&&MONTHS.some(m=>{
+    const p=shiftParams(m.key); return p.per>0||p.loss>0;});
+  const variants=[
+    {id:'g11',name:'G11',                      g12:false,cap:0,   pow:0,   shift:false},
+    {id:'g12',name:'G12',                      g12:true, cap:0,   pow:0,   shift:false},
+    {id:'a',  name:`G12 +${fmt(capA,0)} kWh`,  g12:true, cap:capA,pow:powA,shift:false},
+    {id:'b',  name:`G12 +${fmt(capB,0)} kWh`,  g12:true, cap:capB,pow:powB,shift:false}];
+  if(anyShift){
+    if(cfg.shiftG11)
+      variants.push({id:'g11s',name:'G11 + noc',g12:false,cap:0,pow:0,shift:true});
+    variants.push(
+      {id:'g12s',name:'G12 + noc',                        g12:true,cap:0,   pow:0,   shift:true},
+      {id:'as',  name:`G12 +${fmt(capA,0)} kWh + noc`, g12:true,cap:capA,pow:powA,shift:true},
+      {id:'bs',  name:`G12 +${fmt(capB,0)} kWh + noc`, g12:true,cap:capB,pow:powB,shift:true});
+  }
+
+  // Zapętlenie roku: powtarzamy przebieg, podając na wejście stan z końca
+  // poprzedniego, aż saldo depozytu przestanie się zmieniać. Grudzień staje się
+  // wtedy miesiącem poprzedzającym styczeń, a styczeń nie zaczyna od zera.
+  const loop=canLoop()&&document.getElementById('loopYear').checked;
+  let res=onePass(variants,opt0,cfg,{},{}), iter=1, conv=true;
+  if(loop){
+    conv=false;
+    const sum=r=>variants.reduce((a,v)=>a+r.totals[v.id].pay,0);
+    for(iter=2;iter<=12;iter++){
+      const prev=sum(res);
+      res=onePass(variants,opt0,cfg,res.dep,res.bat);
+      if(Math.abs(sum(res)-prev)<0.5){conv=true;break}
+    }
+  }
+
+  const out=document.getElementById('out'); out.innerHTML='';
+  res.months.forEach(x=>out.appendChild(
+    monthCard(x.m,x.rows,x.grids,variants,x.prices,monthCoverage(x.m),x.sh)));
+
+  document.getElementById('totalWrap').hidden=!MONTHS.length;
+  const items=variants.map(v=>{const t=res.totals[v.id];
+    return {name:v.name,g12:v.g12,cap:v.cap,imp:t.imp,impNight:t.impNight,
+            expPv:t.expPv,expBat:t.expBat,dep:t.acc,pay:t.pay}});
+  const refunds=variants.filter(v=>res.totals[v.id].refund>0.005)
+    .map(v=>v.name+' '+zl(res.totals[v.id].refund));
+  const foot=(loop
+    ? `Rok zapętlony — saldo depozytu i stan magazynu z grudnia podane na wejście stycznia,
+       przeliczone ${iter}‑krotnie do stanu ustalonego${conv?'':' (bez pełnej zbieżności)'}.
+       Saldo przechodzące przez granicę roku:
+       ${variants.map(v=>v.name+' '+zl(depBal(res.dep[v.id]))).join(' · ')}.`
+    : `Suma za ${MONTHS.length} ${MONTHS.length===1?'miesiąc':'mies.'}:
+       ${MONTHS.map(m=>m.label).join(', ')}. Pierwszy miesiąc startuje z zerowym depozytem
+       i pustym magazynem. Saldo na koniec okresu:
+       ${variants.map(v=>v.name+' '+zl(depBal(res.dep[v.id]))).join(' · ')}.`)
+    +(refunds.length?` Zwrot 20% za depozyt przeterminowany po 12 mies.: ${refunds.join(' · ')}.`:'');
+  document.getElementById('totalTab').outerHTML=
+    resultTable(items,foot).replace('<table','<table id="totalTab"');
+  LAST_CHART={months:res.months,variants}; drawChart();
+}
+
+/* ============ wykres „do zapłaty” ============ */
+// Jedna linia na każdy wiersz tabeli. Warianty różniące się tylko przesunięciem
+// dostają ten sam kolor, ale linię przerywaną — dzięki temu od razu widać parę
+// „bez / z przesunięciem”, zamiast szukać jej w legendzie.
+const MON_SHORT=['sty','lut','mar','kwi','maj','cze','lip','sie','wrz','paź','lis','gru'];
+const CHART_PAL=['#8ea0ba','#3fa7d6','#f2a541','#5fd39a','#c88bd6','#e5654f'];
+function payChart(months,variants,width){
+  if(!months.length) return '';
+  // Rysujemy w jednostkach równych pikselom kontenera, żeby wykres mieścił się
+  // w oknie bez przewijania, a napisy zachowały czytelny rozmiar niezależnie
+  // od szerokości ekranu. Po obróceniu telefonu przerysowuje się szerszy.
+  const W=Math.max(300,Math.min(width||760,900));
+  const H=Math.round(Math.max(230,Math.min(W*0.62,340)));
+  const L=46,R=10,T=18,B=30;
+  const iw=W-L-R, ih=H-T-B, n=months.length;
+  const px=i=>n===1?L+iw/2:L+iw*i/(n-1);
+  let max=0;
+  variants.forEach((v,j)=>months.forEach(m=>{if(m.rows[j])max=Math.max(max,m.rows[j].pay)}));
+  const step=Math.max(100,Math.ceil(max/4/100)*100), top=Math.ceil(max/step)*step||step;
+  const py=val=>T+ih-ih*val/top;
+
+  const keys=[];
+  const meta=variants.map(v=>{
+    const k=(v.g12?'g':'n')+v.cap;
+    let i=keys.indexOf(k); if(i<0){keys.push(k); i=keys.length-1;}
+    return {color:CHART_PAL[i%CHART_PAL.length],dash:v.shift?'5 4':''};
+  });
+
+  let g='';
+  for(let v=0;v<=top+1;v+=step){
+    g+='<line x1="'+L+'" y1="'+py(v)+'" x2="'+(W-R)+'" y2="'+py(v)+
+       '" stroke="#26344a" stroke-width="1"/>'+
+       '<text x="'+(L-6)+'" y="'+(py(v)+4)+'" text-anchor="end" font-size="10.5" '+
+       'fill="#8ea0ba">'+fmt(v,0)+'</text>';
+  }
+  // przy ciasnym rozstawie podpisujemy co drugi miesiąc, żeby się nie zlewały
+  const gap=n>1?iw/(n-1):iw, every=gap<26?2:1;
+  months.forEach((m,i)=>{
+    if(i%every) return;
+    g+='<text x="'+px(i)+'" y="'+(H-10)+'" text-anchor="middle" font-size="10.5" '+
+       'fill="#8ea0ba">'+MON_SHORT[m.m.month-1]+'</text>';
+  });
+
+  let lines='';
+  variants.forEach((v,j)=>{
+    const pts=months.map((m,i)=>[px(i),py(m.rows[j].pay)]);
+    const d=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+    lines+='<path d="'+d+'" fill="none" stroke="'+meta[j].color+'" stroke-width="2" '+
+      'stroke-linejoin="round" stroke-linecap="round"'+
+      (meta[j].dash?' stroke-dasharray="'+meta[j].dash+'"':'')+'/>';
+    pts.forEach((p,i)=>{
+      lines+='<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(n>8?2.2:3)+'" '+
+        'fill="#141d2b" stroke="'+meta[j].color+'" stroke-width="2"><title>'+
+        v.name+' · '+months[i].m.label+': '+zl(months[i].rows[j].pay)+'</title></circle>';
+    });
+  });
+
+  const legend=variants.map((v,j)=>
+    '<span><svg width="18" height="8" style="vertical-align:0"><line x1="0" y1="4" x2="18" y2="4" '+
+    'stroke="'+meta[j].color+'" stroke-width="2"'+
+    (meta[j].dash?' stroke-dasharray="'+meta[j].dash+'"':'')+'/></svg> '+v.name+'</span>').join('');
+
+  return '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" '+
+    'style="width:100%;height:auto;display:block;border:none" '+
+    'xmlns="http://www.w3.org/2000/svg"><text x="'+L+'" y="'+(T-5)+'" font-size="10.5" '+
+    'fill="#8ea0ba">zł brutto</text>'+g+lines+'</svg>'+
+    '<div class="legend" style="margin-top:10px">'+legend+'</div>';
+}
+
+// Przerysowanie po zmianie szerokości okna, np. po obróceniu telefonu.
+let LAST_CHART=null;
+function drawChart(){
+  const card=document.getElementById('chartCard');
+  if(!card||!LAST_CHART) return;
+  card.innerHTML='<h3 style="font-family:var(--display);text-transform:uppercase;'+
+    'letter-spacing:.06em;font-size:16px;margin:0 0 6px;color:var(--ink-dim)">'+
+    'Do zapłaty w kolejnych miesiącach</h3>'+
+    payChart(LAST_CHART.months,LAST_CHART.variants,card.clientWidth);
+}
+addEventListener('resize',(()=>{let t;return()=>{clearTimeout(t);t=setTimeout(drawChart,150)}})());
+addEventListener('orientationchange',()=>setTimeout(drawChart,250));
+
+/* ============ karta miesiąca ============ */
+function monthCard(m,rows,grids,variants,prices,cov,sh){
+  const el=document.createElement('div'); el.className='card';
+  let pmin=Infinity,pmax=-Infinity,psum=0;
+  for(const p of prices){pmin=Math.min(pmin,p);pmax=Math.max(pmax,p);psum+=p;}
+  const srcTxt=cov>0.99?('RCE godzinowe · '+(rceSource[m.key]||'plik'))
+              :cov>0?`RCE godzinowe dla ${fmt(cov*100,0)}% godzin, reszta cena zastępcza`
+              :'cena zastępcza dla wszystkich godzin';
+
+  el.innerHTML=`
+    <div class="card-h">
+      <h3>${m.label}</h3>
+      <div class="meta">${m.nDays} dni · licznik: pobrane ${fmt(m.meterTaken,1)} kWh,
+        oddane ${fmt(m.pvGiven,1)} kWh<br>po zbilansowaniu: pobór ${fmt(rows[0].s.imp,1)} kWh,
+        nadwyżka ${fmt(rows[0].s.exp,1)} kWh<br>${srcTxt} · RCE
+        ${fmt(pmin,0)}–${fmt(pmax,0)}, śr. ${fmt(psum/prices.length,0)} zł/MWh${
+        sh&&sh.moved>0.05?`<br>przesunięte na noc: ${fmt(sh.moved,0)} kWh
+        (${fmt(sh.moved/m.nDays,1)} kWh/dobę), dołożone w strefie taniej:
+        ${fmt(sh.added,0)} kWh`:''}</div>
+    </div>
+    <div class="scroll">${resultTable(rows,
+      `Depozyt naliczony w tym miesiącu. Wykorzystany z poprzednich okresów:
+       ${rows.map(r=>fmt(r.used,2)).join(' / ')} zł — kolejność jak w wierszach.
+       Kolumna zł/kWh to realnie uzyskana cena za energię oddaną do sieci. Pobór i energia oddana w kWh, kwoty w zł brutto. Zielony pasek przy nazwie oznacza najtańszy wariant. Dopisek „+ noc” to wariant z przesunięciem zużycia na tanie godziny.`)}</div>
+    <div class="tabs">${variants.map((v,i)=>
+      `<button class="tab" data-k="${v.id}" aria-pressed="${i===0}">${v.name}</button>`).join('')}</div>
+    <canvas></canvas>
+    <div class="legend">
+      <span><i style="background:var(--day)"></i>pobór z sieci — im jaśniej, tym więcej</span>
+      <span><i style="background:var(--pv)"></i>oddawanie do sieci</span>
+      <span>poziomo: godziny 0–24 · pionowo: kolejne dni</span>
+    </div>`;
+
+  const cv=el.querySelector('canvas');
+  const draw=k=>{
+    const g=grids[k],D=m.nDays,CELL=14;
+    cv.width=24*CELL; cv.height=D*CELL;
+    const ctx=cv.getContext('2d');
+    const mx=Math.max(0.001,...g.map(Math.abs));
+    for(let d=0;d<D;d++)for(let h=0;h<24;h++){
+      const v=g[d*24+h]??0,t=Math.min(1,Math.abs(v)/mx);
+      ctx.fillStyle=v>=0?`rgba(242,165,65,${0.06+0.94*t})`:`rgba(95,211,154,${0.15+0.85*t})`;
+      ctx.fillRect(h*CELL,d*CELL,CELL-1,CELL-1);
+      if(isNight(m.month,h)){ctx.fillStyle='rgba(63,167,214,.16)';ctx.fillRect(h*CELL,d*CELL,CELL-1,2);}
+    }
+  };
+  el.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
+    el.querySelectorAll('.tab').forEach(x=>x.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true'); draw(b.dataset.k);});
+  draw(variants[0].id);
+  return el;
+}
+</script>
+</body>
+</html>
