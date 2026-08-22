@@ -294,6 +294,20 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
       wykorzystać. Jeśli budujesz go więcej, niż wynosi roczna wartość energii czynnej na rachunku,
       nadwyżka przepada ze zwrotem 30% i wtedy lepiej włączyć priorytet samowystarczalności.</p>
 
+    <div class="sub-h">Taryfa dynamiczna</div>
+    <div class="check"><input type="checkbox" id="dynOn" checked>
+      <span>pokaż wiersze z ceną energii wprost wg RCE</span></div>
+    <div class="grid">
+      <div><label>marża sprzedawcy zł/kWh</label><input id="dynMargin" value="0.05"></div>
+      <div><label>opłata handlowa zł/mies.</label><input id="dynFee" value="10"></div>
+    </div>
+    <p class="note">Energia czynna wyceniana jest godzina po godzinie po tej samej cenie RCE,
+      po której rozliczane są nadwyżki, powiększonej o marżę sprzedawcy. Dystrybucja liczona
+      jak w G11, bo taryfa dynamiczna nie ma stref — sygnał cenowy niesie sama cena energii.
+      Godziny tanie i drogie magazyn wyznacza wtedy z mediany ceny dla danej doby, a nie
+      z pory dnia. W godzinach z ujemnym RCE cena energii również schodzi poniżej zera,
+      tak jak u sprzedawców przenoszących ceny rynkowe wprost na odbiorcę.</p>
+
     <div class="sub-h">Rozliczenie nadwyżek</div>
     <div class="grid">
       <div><label>współczynnik korekcyjny</label><input id="corr" value="1.23"></div>
@@ -319,6 +333,7 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
   <div class="card"><div class="scroll"><table id="totalTab"></table></div></div>
   <div class="card" id="chartCard"></div>
   <div class="card" id="paybackCard"></div>
+  <div class="card" id="sweepCard"></div>
 </section>
 
 <p class="note" style="margin-top:26px;border-top:1px solid var(--line);padding-top:14px">
@@ -655,13 +670,13 @@ function parseRceFile(text,name){
 //    oddanie jutro w południe po cenie dołka albo brak miejsca na produkcję.
 //    Sprzedajemy ją w najlepiej płatnej godzinie przed kolejnym naładowaniem,
 //    już bez progu opłacalności.
-function lookahead(series,prices,i,cap,horizon,month){
+function lookahead(series,prices,i,cap,horizon,nightAt){
   let load=0,loadDay=0,surplus=0,peak=prices[i];
   const n=series.length;
   for(let j=i+1;j<n&&j<i+horizon;j++){
     if(prices[j]>peak) peak=prices[j];
     const v=series[j];
-    if(v>0){ load+=v; if(!isNight(month,j%24)) loadDay+=v;
+    if(v>0){ load+=v; if(!nightAt(j)) loadDay+=v;
              if(load>=cap) return {res:cap,resDay:Math.min(loadDay,cap),peak}; }
     else   { surplus-=v; if(surplus>=cap) break; }
   }
@@ -671,10 +686,10 @@ function lookahead(series,prices,i,cap,horizon,month){
 // w nadchodzącym bloku drogiej strefy ponad to, co pokryje własna produkcja.
 // Zimą wychodzi cała pojemność, latem prawie zero — dzięki temu rano
 // zostaje miejsce na PV, zamiast blokować magazyn energią kupioną z sieci.
-function gridNeed(month,series,i,cap,horizon){
+function gridNeed(nightAt,series,i,cap,horizon){
   let need=0,seenDay=false;
   for(let j=i+1;j<series.length&&j<i+horizon;j++){
-    if(!isNight(month,j%24)){
+    if(!nightAt(j)){
       seenDay=true;
       if(series[j]>0){ need+=series[j]; if(need>=cap) return cap; }
     }else if(seenDay) break;
@@ -688,13 +703,18 @@ function simulate(month,series,cap,powr,effOne,o,init){
     const tot=pv+gr; if(tot>cap){pv*=cap/tot; gr*=cap/tot;}
   }
   let impDay=0,impNight=0,expPv=0,expBat=0,expSpare=0,thru=0;
+  // W taryfie strefowej o tym, co tanie, decyduje pora doby; w dynamicznej — sama cena.
+  const nightAt = o.cheapArr ? (j)=>!!o.cheapArr[j] : (j)=>isNight(month,j%24);
+  const rD = o.retailArr ? (i)=>o.retailArr[i] : (i)=>o.retailDay;
+  const rN = o.selfFirst ? ()=>1e9
+           : (o.retailArr ? (i)=>o.retailArr[i] : ()=>o.retailNight);
   const grid=new Array(series.length);
   const pvRes=Math.min(o.pvRes,cap);
   for(let i=0;i<series.length;i++){
-    const h=i%24,night=isNight(month,h),v=series[i];
+    const h=i%24,night=nightAt(i),v=series[i];
     let g=0,pw=powr;
     const price=o.prices[i]/1000;                       // zł/kWh
-    const beatsHome = o.autoThr ? price*o.corr>o.retailDay : o.prices[i]>=o.thr;
+    const beatsHome = o.autoThr ? price*o.corr>rD(i) : o.prices[i]>=o.thr;
 
     if(v<0){                                            // nadwyżka PV w tej godzinie
       const s=-v; let in_=0;
@@ -712,8 +732,8 @@ function simulate(month,series,cap,powr,effOne,o,init){
         // Zasilenie domu własnym PV w tanich godzinach, gdy uniknięty koszt bije
         // najlepszą nadchodzącą cenę eksportu. Bez tego magazyn trzymał rezerwę,
         // której nigdy nie wydawał, a dom i tak kupował z sieci.
-        const la=lookahead(series,o.prices,i,cap,o.horizon,month);
-        if(!o.sell||la.peak/1000*o.corr<o.retailNight){
+        const la=lookahead(series,o.prices,i,cap,o.horizon,nightAt);
+        if(!o.sell||la.peak/1000*o.corr<rN(i)){
           const dis=Math.min(g,pw,pv*effOne);
           if(dis>0){pv-=dis/effOne;thru+=dis;pw-=dis;g-=dis;}
         }
@@ -721,7 +741,7 @@ function simulate(month,series,cap,powr,effOne,o,init){
       if(night){
         impNight+=g;
         if(cap>0){                                      // nocne ładowanie z sieci
-          const need=gridNeed(month,series,i,cap,o.horizon);
+          const need=gridNeed(nightAt,series,i,cap,o.horizon);
           const room=Math.min((need-pv-gr)/effOne,(cap-pvRes-pv-gr)/effOne);
           const ch=Math.min(pw,Math.max(0,room));
           if(ch>0){gr+=ch*effOne;impNight+=ch;thru+=ch;pw-=ch;g+=ch;}
@@ -730,9 +750,9 @@ function simulate(month,series,cap,powr,effOne,o,init){
     }
 
     if(o.sell&&cap>0&&pv>0&&pw>0){
-      const la=lookahead(series,o.prices,i,cap,o.horizon,month);
+      const la=lookahead(series,o.prices,i,cap,o.horizon,nightAt);
       // Rezerwę na noc odkładamy tylko wtedy, gdy faktycznie zostanie zużyta.
-      const res=(!o.sell||la.peak/1000*o.corr<o.retailNight)?la.res:la.resDay;
+      const res=(!o.sell||la.peak/1000*o.corr<rN(i))?la.res:la.resDay;
       const needPv=Math.max(0,res-gr*effOne);        // ile PV zostawić dla domu
       const spare=Math.max(0,pv*effOne-needPv);
       let out=0;
@@ -834,7 +854,7 @@ function depUse(D,amount){               // najstarsze koszyki najpierw
 // Ten sam zestaw kolumn i te same szerokości w każdym miesiącu i w podsumowaniu,
 // żeby wiersze dało się porównywać wzrokiem przewijając stronę.
 const COLS=[
-  ['Wariant','150px'],['Pobór kWh','75px'],['Tania strefa','120px'],['Odd. z PV','85px'],
+  ['Wariant','150px'],['Pobór kWh','75px'],['Tanie godz.','120px'],['Odd. z PV','85px'],
   ['Odd. z magaz.','105px'],['Depozyt zł','95px'],['zł/kWh','75px'],
   ['Do zapłaty zł','110px'],['vs G11 zł','100px']];
 function resultTable(items,footer){
@@ -848,7 +868,7 @@ function resultTable(items,footer){
       return `<tr${r.pay===min?' class="best"':''}>
         <td title="${r.name}">${r.name}</td>
         <td>${fmt(r.imp,0)}</td>
-        <td>${r.g12?fmt(r.impNight,0)+' <span style="color:var(--ink-dim)">('+
+        <td>${(r.g12||r.dyn)?fmt(r.impNight,0)+' <span style="color:var(--ink-dim)">('+
             fmt(100*r.impNight/Math.max(r.imp,.001),0)+'%)</span>':'—'}</td>
         <td>${fmt(r.expPv,1)}</td>
         <td>${r.cap>0?fmt(r.expBat,1):'—'}</td>
@@ -860,7 +880,17 @@ function resultTable(items,footer){
 }
 
 /* ============ koszty ============ */
-function cost(sim,isG12){
+function cost(sim,isG12,v,prices,cfg){
+  if(v&&v.dyn){                                   // energia po cenie godzinowej RCE + marża
+    let energy=0;
+    for(let i=0;i<sim.grid.length;i++)
+      if(sim.grid[i]>0) energy+=sim.grid[i]*(prices[i]/1000+cfg.dynMargin);
+    return {energy, dist:sim.imp*P('sG11'), extras:sim.imp*P('addv'),
+            fixed:P('fsG11')+P('fAb')+P('fMoc')+cfg.dynFee};
+  }
+  return costZone(sim,isG12);
+}
+function costZone(sim,isG12){
   const add=P('addv');
   const energy=isG12?sim.impDay*P('eG12d')+sim.impNight*P('eG12n'):sim.imp*P('eG11');
   const dist  =isG12?sim.impDay*P('sG12d')+sim.impNight*P('sG12n'):sim.imp*P('sG11');
@@ -1025,14 +1055,30 @@ function onePass(variants,opt0,cfg,startDep,startBat){
   MONTHS.forEach(m=>{
     const prices=priceArray(m,cfg.clip,cfg.flat);
     const opt=Object.assign({},opt0,{prices});
+    // Dla taryfy dynamicznej: godzinowa cena detaliczna brutto oraz podział doby
+    // na tanie i drogie godziny wg mediany ceny z danego dnia.
+    const dynRetail=new Float64Array(prices.length);
+    const dynCheap=new Uint8Array(prices.length);
+    const fixedPart=P('sG11')+P('addv')+cfg.dynMargin;
+    for(let d=0;d*24<prices.length;d++){
+      const day=[];
+      for(let h=0;h<24&&d*24+h<prices.length;h++) day.push(prices[d*24+h]);
+      const med=[...day].sort((a,b)=>a-b)[Math.floor(day.length/2)];
+      for(let h=0;h<day.length;h++){
+        const i=d*24+h;
+        dynRetail[i]=(prices[i]/1000+fixedPart)*cfg.vat;
+        dynCheap[i]=prices[i]<=med?1:0;
+      }
+    }
     const sp=cfg.shiftOn?shiftParams(m.key):{per:0,loss:0};
     const sh=shiftSeries(m,sp.per,sp.loss);
     const rows=[],grids={};
     variants.forEach(v=>{
       const series=v.shift?sh.series:m.series;
-      const s=simulate(m.month,series,v.cap,v.pow,cfg.effOne,opt,bat[v.id]);
+      const vo=v.dyn?Object.assign({},opt,{retailArr:dynRetail,cheapArr:dynCheap}):opt;
+      const s=simulate(m.month,series,v.cap,v.pow,cfg.effOne,vo,bat[v.id]);
       bat[v.id]={pv:s.pv,gr:s.gr};
-      const c=cost(s,v.g12);
+      const c=cost(s,v.g12,v,prices,cfg);
       const refund=depAge(dep[v.id],cfg.refundPct);                       // przeterminowane koszyki
       const eBill=cfg.depGross?c.energy*cfg.vat:c.energy;   // co depozyt może pomniejszyć
       const used=depUse(dep[v.id],eBill);
@@ -1042,7 +1088,7 @@ function onePass(variants,opt0,cfg,startDep,startBat){
       const t=totals[v.id];
       t.pay+=pay; t.imp+=s.imp; t.impNight+=s.impNight; t.exp+=s.exp;
       t.expPv+=s.expPv; t.expBat+=s.expBat; t.acc+=d.dep; t.refund+=refund;
-      rows.push({name:v.name,g12:v.g12,cap:v.cap,imp:s.imp,impNight:s.impNight,
+      rows.push({name:v.name,g12:v.g12,dyn:v.dyn,cap:v.cap,imp:s.imp,impNight:s.impNight,
                  expPv:s.expPv,expBat:s.expBat,dep:d.dep,pay,used,refund,s});
       grids[v.id]=s.grid;
     });
@@ -1058,7 +1104,8 @@ function run(){
     depGross:document.getElementById('depGross').checked,
     shiftG11:document.getElementById('shiftG11').checked,
     shiftOn:document.getElementById('shiftOn').checked,
-    refundPct:Math.max(0,Math.min(1,P('refundPct')/100))};
+    refundPct:Math.max(0,Math.min(1,P('refundPct')/100)),
+    dynMargin:P('dynMargin'), dynFee:P('dynFee')};
   document.getElementById('shiftGrid').style.opacity=cfg.shiftOn?'1':'.4';
   document.getElementById('shiftG11').disabled=!cfg.shiftOn;
   const capA=P('capA'),powA=P('powA'),capB=P('capB'),powB=P('powB');
@@ -1068,8 +1115,8 @@ function run(){
               thr:P('thr'), pvRes:P('pvRes'), corr,
               floor:P('floor'), peakF:P('peakF')/100, horizon:Math.max(6,P('horizon')),
               retailDay:(P('eG12d')+P('sG12d')+P('addv'))*vat,
-              retailNight:document.getElementById('selfFirst').checked
-                ? 1e9 : (P('eG12n')+P('sG12n')+P('addv'))*vat};
+              retailNight:(P('eG12n')+P('sG12n')+P('addv'))*vat,
+              selfFirst:document.getElementById('selfFirst').checked};
   // Warianty z przesunięciem dochodzą jako osobne wiersze, żeby w jednej
   // tabeli stały obok siebie te same konfiguracje bez i z nocnym doładowaniem.
   const anyShift=cfg.shiftOn&&MONTHS.some(m=>{
@@ -1079,6 +1126,12 @@ function run(){
     {id:'g12',name:'G12',                      g12:true, cap:0,   pow:0,   shift:false},
     {id:'a',  name:`G12 +${fmt(capA,0)} kWh`,  g12:true, cap:capA,pow:powA,shift:false,price:prA},
     {id:'b',  name:`G12 +${fmt(capB,0)} kWh`,  g12:true, cap:capB,pow:powB,shift:false,price:prB}];
+  if(document.getElementById('dynOn').checked){
+    variants.push(
+      {id:'d0',name:'RCE dynamiczna',            g12:false,cap:0,   pow:0,   shift:false,dyn:true},
+      {id:'dA',name:`RCE dyn. +${fmt(capA,0)} kWh`,g12:false,cap:capA,pow:powA,shift:false,dyn:true,price:prA},
+      {id:'dB',name:`RCE dyn. +${fmt(capB,0)} kWh`,g12:false,cap:capB,pow:powB,shift:false,dyn:true,price:prB});
+  }
   if(anyShift){
     if(cfg.shiftG11)
       variants.push({id:'g11s',name:'G11 + noc',g12:false,cap:0,pow:0,shift:true});
@@ -1109,7 +1162,7 @@ function run(){
 
   document.getElementById('totalWrap').hidden=!MONTHS.length;
   const items=variants.map(v=>{const t=res.totals[v.id];
-    return {name:v.name,g12:v.g12,cap:v.cap,imp:t.imp,impNight:t.impNight,
+    return {name:v.name,g12:v.g12,dyn:v.dyn,cap:v.cap,imp:t.imp,impNight:t.impNight,
             expPv:t.expPv,expBat:t.expBat,dep:t.acc,pay:t.pay}});
   const refunds=variants.filter(v=>res.totals[v.id].refund>0.005)
     .map(v=>v.name+' '+zl(res.totals[v.id].refund));
@@ -1128,6 +1181,8 @@ function run(){
   LAST_CHART={months:res.months,variants}; drawChart();
   document.getElementById('paybackCard').innerHTML=
     paybackBlock(variants,res.totals,MONTHS.length);
+  LAST_SWEEP={rows:sweepData(opt0,cfg,capA,powA,prA,capB,powB,prB,loop),capA,capB};
+  drawSweep();
 }
 
 /* ============ wykres „do zapłaty” ============ */
@@ -1209,8 +1264,23 @@ function drawChart(){
     'Do zapłaty w kolejnych miesiącach</h3>'+
     payChart(LAST_CHART.months,LAST_CHART.variants,card.clientWidth);
 }
-addEventListener('resize',(()=>{let t;return()=>{clearTimeout(t);t=setTimeout(drawChart,150)}})());
-addEventListener('orientationchange',()=>setTimeout(drawChart,250));
+let LAST_SWEEP=null;
+function drawSweep(){
+  const card=document.getElementById('sweepCard');
+  if(!card) return;
+  if(!LAST_SWEEP||!LAST_SWEEP.rows){card.innerHTML='';return}
+  card.innerHTML='<h3 style="font-family:var(--display);text-transform:uppercase;'+
+    'letter-spacing:.06em;font-size:16px;margin:0 0 6px;color:var(--ink-dim)">'+
+    'Opłacalność wg pojemności</h3>'+
+    sweepChart(LAST_SWEEP.rows,card.clientWidth,LAST_SWEEP.capA,LAST_SWEEP.capB)+
+    '<p class="note">Każdy punkt to osobny pełny przebieg obliczeń. Moc ładowania skalowana '+
+    'tym samym C-rate co wariant A i ograniczona mocą większego z wariantów, cena '+
+    'interpolowana liniowo przez oba zadane punkty cenowe. Pionowe linie oznaczają '+
+    'pojemności wpisane w ustawieniach.</p>';
+}
+function redrawAll(){drawChart();drawSweep();}
+addEventListener('resize',(()=>{let t;return()=>{clearTimeout(t);t=setTimeout(redrawAll,150)}})());
+addEventListener('orientationchange',()=>setTimeout(redrawAll,250));
 
 /* ============ czas zwrotu ============ */
 // Zwrot liczony przy założeniu, że każdy miesiąc roku wygląda jak średnia
@@ -1221,7 +1291,8 @@ function paybackBlock(variants,totals,nMonths){
   const bat=variants.filter(v=>v.cap>0);
   if(!bat.length) return '';
   const items=bat.map(v=>{
-    const base=variants.find(b=>b.cap===0&&b.g12===v.g12&&b.shift===v.shift)||variants[0];
+    const base=variants.find(b=>b.cap===0&&b.g12===v.g12&&b.shift===v.shift&&
+                              !!b.dyn===!!v.dyn)||variants[0];
     const save=totals[base.id].pay-totals[v.id].pay;
     const perMonth=save/nMonths;
     const months=perMonth>0?v.price/perMonth:Infinity;
@@ -1254,6 +1325,94 @@ function paybackBlock(variants,totals,nMonths){
     ' Zwrot prosty: cena podzielona przez średnią miesięczną oszczędność, bez kosztu '+
     'kapitału, degradacji ogniw i zmian stawek. Odniesieniem jest ten sam wariant bez '+
     'magazynu, więc liczba mówi o wartości samego akumulatora.</p>';
+}
+
+/* ============ przemiatanie pojemności ============ */
+// Dla każdej pojemności od 5 kWh do większego z wariantów liczymy pełny przebieg
+// i zestawiamy czas zwrotu z roczną oszczędnością względem G12 bez magazynu.
+// Moc skalowana tym samym C-rate co wariant A, cena interpolowana liniowo
+// przez oba zadane punkty cenowe.
+function sweepData(opt0,cfg,capA,powA,prA,capB,powB,prB,loop){
+  const maxCap=Math.max(capA,capB), minCap=5;
+  if(!(maxCap>minCap)) return null;
+  const crate=capA>0?powA/capA:0.5;
+  const powCap=Math.max(powA,powB);
+  const priceAt=c=>(capB!==capA)
+      ? prA+(c-capA)*(prB-prA)/(capB-capA)
+      : prA/Math.max(capA,1)*c;
+  const vars=[{id:'base',name:'G12',g12:true,cap:0,pow:0,shift:false}];
+  for(let c=minCap;c<=maxCap+1e-9;c++)
+    vars.push({id:'c'+c,name:'G12 +'+c,g12:true,cap:c,
+               pow:Math.min(powCap,c*crate),shift:false,price:priceAt(c)});
+  let res=onePass(vars,opt0,cfg,{},{});
+  for(let k=1;k<(loop?3:1);k++) res=onePass(vars,opt0,cfg,res.dep,res.bat);
+  const n=MONTHS.length, base=res.totals.base.pay;
+  return vars.slice(1).map(v=>{
+    const save=(base-res.totals[v.id].pay)/n*12;
+    return {cap:v.cap,price:v.price,save,months:save>0?v.price/(save/12):Infinity};
+  });
+}
+
+function sweepChart(rows,width,capA,capB){
+  if(!rows||!rows.length) return '';
+  const W=Math.max(300,Math.min(width||760,900));
+  const H=Math.round(Math.max(240,Math.min(W*0.60,340)));
+  const L=44,R=54,T=18,B=32;
+  const iw=W-L-R, ih=H-T-B;
+  const c0=rows[0].cap, c1=rows[rows.length-1].cap;
+  const px=c=>c1===c0?L+iw/2:L+iw*(c-c0)/(c1-c0);
+  const fin=rows.filter(r=>isFinite(r.months));
+  const maxM=Math.max(10,...fin.map(r=>r.months));
+  const maxS=Math.max(1,...rows.map(r=>r.save));
+  const stepM=Math.max(6,Math.ceil(maxM/4/6)*6), topM=Math.ceil(maxM/stepM)*stepM;
+  const topS=Math.ceil(maxS/500)*500||500;
+  const pyM=v=>T+ih-ih*v/topM, pyS=v=>T+ih-ih*v/topS;
+
+  let g='';
+  for(let v=0;v<=topM+1e-9;v+=stepM){
+    g+='<line x1="'+L+'" y1="'+pyM(v)+'" x2="'+(W-R)+'" y2="'+pyM(v)+
+       '" stroke="#26344a" stroke-width="1"/>'+
+       '<text x="'+(L-6)+'" y="'+(pyM(v)+4)+'" text-anchor="end" font-size="10.5" '+
+       'fill="#3fa7d6">'+fmt(v,0)+'</text>';
+  }
+  for(let i=0;i<=4;i++){
+    const v=topS*i/4;
+    g+='<text x="'+(W-R+6)+'" y="'+(pyS(v)+4)+'" font-size="10.5" fill="#5fd39a">'+
+       fmt(v,0)+'</text>';
+  }
+  const stepC=Math.max(1,Math.round((c1-c0)/8));
+  for(const r of rows) if((r.cap-c0)%stepC===0)
+    g+='<text x="'+px(r.cap)+'" y="'+(H-10)+'" text-anchor="middle" font-size="10.5" '+
+       'fill="#8ea0ba">'+r.cap+'</text>';
+  for(const c of [capA,capB]) if(c>=c0&&c<=c1)
+    g+='<line x1="'+px(c)+'" y1="'+T+'" x2="'+px(c)+'" y2="'+(T+ih)+
+       '" stroke="#f2a541" stroke-width="1" stroke-dasharray="3 3" opacity=".65"/>';
+
+  const path=(arr,fy,col)=>{
+    if(!arr.length) return '';
+    const d=arr.map((r,i)=>(i?'L':'M')+px(r.cap).toFixed(1)+' '+fy(r).toFixed(1)).join(' ');
+    return '<path d="'+d+'" fill="none" stroke="'+col+'" stroke-width="2" '+
+           'stroke-linejoin="round" stroke-linecap="round"/>';
+  };
+  let lines=path(fin,r=>pyM(r.months),'#3fa7d6')+path(rows,r=>pyS(r.save),'#5fd39a');
+  for(const r of rows){
+    if(isFinite(r.months)) lines+='<circle cx="'+px(r.cap).toFixed(1)+'" cy="'+pyM(r.months).toFixed(1)+
+      '" r="2.4" fill="#141d2b" stroke="#3fa7d6" stroke-width="1.6"><title>'+r.cap+
+      ' kWh: zwrot '+fmt(r.months,0)+' mies., cena '+zl(r.price)+'</title></circle>';
+    lines+='<circle cx="'+px(r.cap).toFixed(1)+'" cy="'+pyS(r.save).toFixed(1)+
+      '" r="2.4" fill="#141d2b" stroke="#5fd39a" stroke-width="1.6"><title>'+r.cap+
+      ' kWh: oszczędność '+zl(r.save)+'/rok</title></circle>';
+  }
+  return '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" '+
+    'style="width:100%;height:auto;display:block;border:none" xmlns="http://www.w3.org/2000/svg">'+
+    '<text x="'+L+'" y="'+(T-5)+'" font-size="10.5" fill="#3fa7d6">zwrot [mies.]</text>'+
+    '<text x="'+(W-R+6)+'" y="'+(T-5)+'" font-size="10.5" fill="#5fd39a">zł/rok</text>'+
+    g+lines+'</svg>'+
+    '<div class="legend" style="margin-top:10px">'+
+    '<span><i style="background:#3fa7d6"></i>czas zwrotu</span>'+
+    '<span><i style="background:#5fd39a"></i>oszczędność roczna vs G12</span>'+
+    '<span><i style="background:#f2a541"></i>zadane pojemności</span>'+
+    '<span>oś pozioma: pojemność [kWh]</span></div>';
 }
 
 /* ============ karta miesiąca ============ */
