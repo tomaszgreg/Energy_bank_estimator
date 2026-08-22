@@ -336,6 +336,7 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
   <div class="card" id="chartCard"></div>
   <div class="card" id="paybackCard"></div>
   <div class="card" id="sweepCard"></div>
+  <div class="card" id="rceCard"></div>
 </section>
 
 <p class="note" style="margin-top:26px;border-top:1px solid var(--line);padding-top:14px">
@@ -765,6 +766,7 @@ function simulate(month,series,cap,powr,effOne,o,init){
     const tot=pv+gr; if(tot>cap){pv*=cap/tot; gr*=cap/tot;}
   }
   let impDay=0,impNight=0,expPv=0,expBat=0,expSpare=0,thru=0;
+  let chPv=0,chGrid=0,disHome=0;      // diagnostyka: skąd energia i dokąd idzie
   // W taryfie strefowej o tym, co tanie, decyduje pora doby; w dynamicznej — sama cena.
   const nightAt = o.cheapArr ? (j)=>!!o.cheapArr[j] : (j)=>isNight(month,j%24);
   // Gdy jest plan cenowy, rozładowanie dozwolone tylko w wybranych godzinach;
@@ -785,14 +787,14 @@ function simulate(month,series,cap,powr,effOne,o,init){
     if(v<0){                                            // nadwyżka PV w tej godzinie
       const s=-v; let in_=0;
       if(cap>0&&!(o.sell&&beatsHome)) in_=Math.min(s,pw,(cap-pv-gr)/effOne);
-      pv+=in_*effOne; thru+=in_; pw-=in_;
+      pv+=in_*effOne; thru+=in_; pw-=in_; chPv+=in_*effOne;
       const e=s-in_; expPv+=e; g-=e;
     }else{
       if(cap>0&&disAt(i)){                              // dom ma pierwszeństwo
         const dis=Math.min(v,pw,(pv+gr)*effOne);
         const fromGr=Math.min(gr,dis/effOne);           // najpierw energia z sieci
         gr-=fromGr; pv-=(dis/effOne-fromGr);
-        thru+=dis; pw-=dis; g+=v-dis;
+        thru+=dis; pw-=dis; g+=v-dis; disHome+=dis;
       }else g+=v;
       if(night&&cap>0&&g>0&&pv>0){
         // Zasilenie domu własnym PV w tanich godzinach, gdy uniknięty koszt bije
@@ -801,7 +803,7 @@ function simulate(month,series,cap,powr,effOne,o,init){
         const la=lookahead(series,o.prices,i,cap,o.horizon,notDis);
         if(!o.sell||la.peak/1000*o.corr<rN(i)){
           const dis=Math.min(g,pw,pv*effOne);
-          if(dis>0){pv-=dis/effOne;thru+=dis;pw-=dis;g-=dis;}
+          if(dis>0){pv-=dis/effOne;thru+=dis;pw-=dis;g-=dis;disHome+=dis;}
         }
       }
       if(night){
@@ -812,7 +814,7 @@ function simulate(month,series,cap,powr,effOne,o,init){
             : gridNeed(notDis,series,i,cap,o.horizon);
           const room=Math.min((need-pv-gr)/effOne,(cap-pvRes-pv-gr)/effOne);
           const ch=Math.min(pw,Math.max(0,room));
-          if(ch>0){gr+=ch*effOne;impNight+=ch;thru+=ch;pw-=ch;g+=ch;}
+          if(ch>0){gr+=ch*effOne;impNight+=ch;thru+=ch;pw-=ch;g+=ch;chGrid+=ch*effOne;}
         }
       }else impDay+=g;
     }
@@ -836,7 +838,7 @@ function simulate(month,series,cap,powr,effOne,o,init){
     }
     grid[i]=g;
   }
-  return {impDay,impNight,imp:impDay+impNight,expPv,expBat,expSpare,
+  return {impDay,impNight,imp:impDay+impNight,expPv,expBat,expSpare,chPv,chGrid,disHome,
           exp:expPv+expBat,soc:pv+gr,pv,gr,thru,grid};
 }
 
@@ -1164,7 +1166,9 @@ function onePass(variants,opt0,cfg,startDep,startBat){
       const t=totals[v.id];
       t.pay+=pay; t.imp+=s.imp; t.impNight+=s.impNight; t.exp+=s.exp;
       t.expPv+=s.expPv; t.expBat+=s.expBat; t.acc+=d.dep; t.refund+=refund;
-      rows.push({name:v.name,g12:v.g12,dyn:v.dyn,cap:v.cap,imp:s.imp,impNight:s.impNight,
+      rows.push({name:v.name,g12:v.g12,dyn:v.dyn,cap:v.cap,pow:v.pow,
+                 chPv:s.chPv,chGrid:s.chGrid,disHome:s.disHome,
+                 imp:s.imp,impNight:s.impNight,
                  expPv:s.expPv,expBat:s.expBat,dep:d.dep,pay,used,refund,s});
       grids[v.id]=s.grid;
     });
@@ -1259,6 +1263,9 @@ function run(){
     paybackBlock(variants,res.totals,MONTHS.length);
   LAST_SWEEP={rows:sweepData(opt0,cfg,capA,powA,prA,capB,powB,prB,loop),capA,capB};
   drawSweep();
+  LAST_RCE=res.months.map(x=>({label:x.m.label,prices:x.prices,nDays:x.m.nDays,
+                               cov:monthCoverage(x.m)}));
+  drawRce();
 }
 
 /* ============ wykres „do zapłaty” ============ */
@@ -1354,7 +1361,7 @@ function drawSweep(){
     'interpolowana liniowo przez oba zadane punkty cenowe. Pionowe linie oznaczają '+
     'pojemności wpisane w ustawieniach.</p>';
 }
-function redrawAll(){drawChart();drawSweep();}
+function redrawAll(){drawChart();drawSweep();drawRce();}
 addEventListener('resize',(()=>{let t;return()=>{clearTimeout(t);t=setTimeout(redrawAll,150)}})());
 addEventListener('orientationchange',()=>setTimeout(redrawAll,250));
 
@@ -1491,6 +1498,80 @@ function sweepChart(rows,width,capA,capB){
     '<span>oś pozioma: pojemność [kWh]</span></div>';
 }
 
+/* ============ wykres cen RCE ============ */
+// Godzina po godzinie dla wybranego miesiąca — to samo, co pokazuje raport PSE,
+// tyle że na tych danych, których faktycznie użyły obliczenia. Służy głównie
+// do sprawdzenia, czy ceny w ogóle się wczytały i jaki mają rozstęp.
+function rceChart(prices,nDays,width){
+  const n=prices.length;
+  if(!n) return '';
+  const W=Math.max(300,Math.min(width||760,900));
+  const H=Math.round(Math.max(200,Math.min(W*0.46,300)));
+  const L=48,R=10,T=18,B=28;
+  const iw=W-L-R, ih=H-T-B;
+  let lo=Infinity,hi=-Infinity,sum=0;
+  for(const v of prices){if(v<lo)lo=v;if(v>hi)hi=v;sum+=v}
+  const sr=sum/n;
+  const top=Math.ceil(Math.max(hi,1)/200)*200;
+  const bot=Math.min(0,Math.floor(lo/200)*200);
+  const px=i=>L+iw*i/Math.max(1,n-1);
+  const py=v=>T+ih-ih*(v-bot)/Math.max(1,top-bot);
+
+  let g='';
+  for(let v=bot;v<=top+1e-9;v+=Math.max(200,Math.round((top-bot)/5/200)*200)){
+    g+='<line x1="'+L+'" y1="'+py(v)+'" x2="'+(W-R)+'" y2="'+py(v)+
+       '" stroke="#26344a" stroke-width="'+(v===0?1.5:1)+'"/>'+
+       '<text x="'+(L-6)+'" y="'+(py(v)+4)+'" text-anchor="end" font-size="10.5" '+
+       'fill="#8ea0ba">'+fmt(v,0)+'</text>';
+  }
+  const krok=nDays>20?5:2;
+  for(let d=krok;d<nDays;d+=krok){
+    const i=d*24;
+    g+='<line x1="'+px(i)+'" y1="'+T+'" x2="'+px(i)+'" y2="'+(T+ih)+
+       '" stroke="#26344a" stroke-width="1" opacity=".5"/>'+
+       '<text x="'+px(i)+'" y="'+(H-8)+'" text-anchor="middle" font-size="10" '+
+       'fill="#8ea0ba">'+(d+1)+'</text>';
+  }
+  g+='<line x1="'+L+'" y1="'+py(sr)+'" x2="'+(W-R)+'" y2="'+py(sr)+
+     '" stroke="#f2a541" stroke-width="1" stroke-dasharray="4 4" opacity=".8"/>';
+
+  let d='';
+  for(let i=0;i<n;i++) d+=(i?'L':'M')+px(i).toFixed(1)+' '+py(prices[i]).toFixed(1)+' ';
+  const linia='<path d="'+d.trim()+'" fill="none" stroke="#3fa7d6" stroke-width="1.2" '+
+    'stroke-linejoin="round"/>';
+
+  return '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" '+
+    'style="width:100%;height:auto;display:block;border:none" xmlns="http://www.w3.org/2000/svg">'+
+    '<text x="'+L+'" y="'+(T-5)+'" font-size="10.5" fill="#8ea0ba">zł/MWh</text>'+
+    g+linia+'</svg>'+
+    '<div class="legend" style="margin-top:10px">'+
+    '<span><i style="background:#3fa7d6"></i>RCE godzinowe</span>'+
+    '<span><i style="background:#f2a541"></i>średnia '+fmt(sr,0)+' zł/MWh</span>'+
+    '<span>zakres '+fmt(lo,0)+' – '+fmt(hi,0)+' zł/MWh</span>'+
+    '<span>oś pozioma: dzień miesiąca</span></div>';
+}
+
+let LAST_RCE=null, RCE_SEL=0;
+function drawRce(){
+  const card=document.getElementById('rceCard');
+  if(!card) return;
+  if(!LAST_RCE||!LAST_RCE.length){card.innerHTML='';return}
+  if(RCE_SEL>=LAST_RCE.length) RCE_SEL=0;
+  const cur=LAST_RCE[RCE_SEL];
+  card.innerHTML='<h3 style="font-family:var(--display);text-transform:uppercase;'+
+    'letter-spacing:.06em;font-size:16px;margin:0 0 6px;color:var(--ink-dim)">Ceny RCE</h3>'+
+    (LAST_RCE.length>1?'<div class="tabs">'+LAST_RCE.map((x,i)=>
+      '<button class="tab" data-i="'+i+'" aria-pressed="'+(i===RCE_SEL)+'">'+
+      x.label+'</button>').join('')+'</div>':'')+
+    rceChart(cur.prices,cur.nDays,card.clientWidth)+
+    '<p class="note">'+(cur.cov>0.99?'Ceny godzinowe z PSE lub z pliku.'
+      :cur.cov>0?('Tylko '+fmt(cur.cov*100,0)+'% godzin ma prawdziwe ceny — reszta to cena '+
+                  'zastępcza, stąd płaskie odcinki.')
+      :'To cena zastępcza, nie prawdziwe RCE — wykres jest płaski, a magazyn nie ma czego '+
+       'arbitrażować. Pobierz ceny z PSE albo wgraj plik.')+'</p>';
+  card.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{RCE_SEL=+b.dataset.i;drawRce()});
+}
+
 /* ============ karta miesiąca ============ */
 function monthCard(m,rows,grids,variants,prices,cov,sh){
   const el=document.createElement('div'); el.className='card';
@@ -1526,7 +1607,13 @@ function monthCard(m,rows,grids,variants,prices,cov,sh){
     <div class="scroll">${resultTable(rows,
       `Depozyt naliczony w tym miesiącu. Wykorzystany z poprzednich okresów:
        ${rows.map(r=>fmt(r.used,2)).join(' / ')} zł — kolejność jak w wierszach.
-       Kolumna zł/kWh to realnie uzyskana cena za energię oddaną do sieci. Pobór i energia oddana w kWh, kwoty w zł brutto. Zielony pasek przy nazwie oznacza najtańszy wariant. Dopisek „+ noc” to wariant z przesunięciem zużycia na tanie godziny.`)}</div>
+       Kolumna zł/kWh to realnie uzyskana cena za energię oddaną do sieci. Pobór i energia oddana w kWh, kwoty w zł brutto. Zielony pasek przy nazwie oznacza najtańszy wariant. Dopisek „+ noc” to wariant z przesunięciem zużycia na tanie godziny.`)}
+      <div class="note" style="margin-top:10px">${rows.filter(r=>r.cap>0).map(r=>
+        `<b style="color:var(--ink)">${r.name}</b> — naładowane: z sieci ${fmt(r.chGrid,0)} kWh,
+         ze słońca ${fmt(r.chPv,0)} kWh · oddane do domu ${fmt(r.disHome,0)} kWh,
+         do sieci ${fmt(r.expBat,0)} kWh ·
+         ${fmt((r.chGrid+r.chPv)/Math.max(r.cap,1)/m.nDays,2)} cyklu na dobę`
+      ).join('<br>')}</div></div>
     <div class="tabs">${variants.map((v,i)=>
       `<button class="tab" data-k="${v.id}" aria-pressed="${i===0}">${v.name}</button>`).join('')}</div>
     <canvas></canvas>
