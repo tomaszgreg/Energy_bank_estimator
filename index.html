@@ -16,6 +16,8 @@
   with this program; if not, see <https://www.gnu.org/licenses/old-licenses/gpl-2.0.html>.
 
   SPDX-License-Identifier: GPL-2.0-only
+
+  Wersja 17 (2026-08-22)
 -->
 <html lang="pl">
 <head>
@@ -365,7 +367,8 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
     ceny RCE — trafiają do pamięci lokalnej przeglądarki, gdy zaznaczysz odpowiednią opcję,
     i można je w każdej chwili usunąć przyciskiem. Odczyty z licznika nie są nigdzie
     zapisywane ani wysyłane.</p>
-  <p class="spdx">SPDX-License-Identifier: GPL-2.0-only</p>
+  <p class="spdx">SPDX-License-Identifier: GPL-2.0-only ·
+    <span id="wersja">wersja —</span></p>
 </footer>
 
 </div>
@@ -483,6 +486,14 @@ async function readXlsx(buf){
   }
   return sheets;
 }
+
+/* ============ wersja ============ */
+const APP_VERSION='17';
+const APP_DATE='2026-08-22';
+document.addEventListener('DOMContentLoaded',()=>{
+  const el=document.getElementById('wersja');
+  if(el) el.textContent='wersja '+APP_VERSION+' z '+APP_DATE;
+});
 
 /* ============ strefy G12 ============ */
 function isNight(month,hour){
@@ -1484,6 +1495,16 @@ function sweepChart(rows,width,capA,capB){
 function monthCard(m,rows,grids,variants,prices,cov,sh){
   const el=document.createElement('div'); el.className='card';
   let pmin=Infinity,pmax=-Infinity,psum=0;
+  // dobowy rozstęp cen — to on decyduje, czy magazyn ma co arbitrażować
+  let rozSum=0,rozMin=Infinity,rozMax=0,dni=0;
+  for(let d=0;d*24<prices.length;d++){
+    let lo=Infinity,hi=-Infinity;
+    for(let h=0;h<24&&d*24+h<prices.length;h++){
+      const v=prices[d*24+h]; if(v<lo)lo=v; if(v>hi)hi=v;
+    }
+    const r=hi-lo; rozSum+=r; if(r<rozMin)rozMin=r; if(r>rozMax)rozMax=r; dni++;
+  }
+  const rozSr=dni?rozSum/dni:0;
   for(const p of prices){pmin=Math.min(pmin,p);pmax=Math.max(pmax,p);psum+=p;}
   const srcTxt=cov>0.99?('RCE godzinowe · '+(rceSource[m.key]||'plik'))
               :cov>0?`RCE godzinowe dla ${fmt(cov*100,0)}% godzin, reszta cena zastępcza`
@@ -1495,7 +1516,9 @@ function monthCard(m,rows,grids,variants,prices,cov,sh){
       <div class="meta">${m.nDays} dni · licznik: pobrane ${fmt(m.meterTaken,1)} kWh,
         oddane ${fmt(m.pvGiven,1)} kWh<br>po zbilansowaniu: pobór ${fmt(rows[0].s.imp,1)} kWh,
         nadwyżka ${fmt(rows[0].s.exp,1)} kWh<br>${srcTxt} · RCE
-        ${fmt(pmin,0)}–${fmt(pmax,0)}, śr. ${fmt(psum/prices.length,0)} zł/MWh${
+        ${fmt(pmin,0)}–${fmt(pmax,0)}, śr. ${fmt(psum/prices.length,0)} zł/MWh<br>rozstęp
+        dobowy: śr. ${fmt(rozSr,0)}, od ${fmt(rozMin,0)} do ${fmt(rozMax,0)} zł/MWh${
+        rozSr<150?' — za mało na arbitraż w taryfie dynamicznej':''}${
         sh&&sh.moved>0.05?`<br>przesunięte na noc: ${fmt(sh.moved,0)} kWh
         (${fmt(sh.moved/m.nDays,1)} kWh/dobę), dołożone w strefie taniej:
         ${fmt(sh.added,0)} kWh`:''}</div>
@@ -1510,21 +1533,31 @@ function monthCard(m,rows,grids,variants,prices,cov,sh){
     <div class="legend">
       <span><i style="background:var(--day)"></i>pobór z sieci — im jaśniej, tym więcej</span>
       <span><i style="background:var(--pv)"></i>oddawanie do sieci</span>
+      <span><i style="background:rgba(255,255,255,.05)"></i>zerowy pobór — magazyn pokrywa całość</span>
       <span>poziomo: godziny 0–24 · pionowo: kolejne dni</span>
     </div>`;
 
   const cv=el.querySelector('canvas');
   // Jedna skala kolorów dla wszystkich wariantów, inaczej mapy nie dałoby się
-  // porównywać między zakładkami — ten sam pobór wychodziłby raz jaśniej, raz ciemniej.
-  let mx=0.001;
-  for(const k of Object.keys(grids)) for(const v of grids[k]) if(Math.abs(v)>mx) mx=Math.abs(v);
+  // porównywać między zakładkami. Górę skali bierzemy z 95. percentyla, a nie
+  // z maksimum: pojedyncze godziny ładowania pełną mocą inaczej spłaszczyłyby
+  // resztę mapy tak, że różnica między zerowym a normalnym poborem znika.
+  const wsz=[];
+  for(const k of Object.keys(grids)) for(const v of grids[k]){
+    const a=Math.abs(v); if(a>0.01) wsz.push(a);
+  }
+  wsz.sort((a,b)=>a-b);
+  const mx=Math.max(0.001,wsz.length?wsz[Math.floor(wsz.length*0.95)]:1);
   const draw=k=>{
     const g=grids[k],D=m.nDays,CELL=14;
     cv.width=24*CELL; cv.height=D*CELL;
     const ctx=cv.getContext('2d');
     for(let d=0;d<D;d++)for(let h=0;h<24;h++){
-      const v=g[d*24+h]??0,t=Math.min(1,Math.abs(v)/mx);
-      ctx.fillStyle=v>=0?`rgba(242,165,65,${0.06+0.94*t})`:`rgba(95,211,154,${0.15+0.85*t})`;
+      const v=g[d*24+h]??0;
+      // krzywa gamma rozciąga dolny zakres, żeby małe pobory nie zlewały się z zerem
+      const t=Math.pow(Math.min(1,Math.abs(v)/mx),0.62);
+      ctx.fillStyle = Math.abs(v)<0.01 ? 'rgba(255,255,255,0.035)'
+        : (v>0?`rgba(242,165,65,${0.20+0.80*t})`:`rgba(95,211,154,${0.28+0.72*t})`);
       ctx.fillRect(h*CELL,d*CELL,CELL-1,CELL-1);
       if(isNight(m.month,h)){ctx.fillStyle='rgba(63,167,214,.16)';ctx.fillRect(h*CELL,d*CELL,CELL-1,2);}
     }
