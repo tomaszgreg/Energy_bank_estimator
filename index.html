@@ -690,7 +690,7 @@ function simulate(month,series,cap,powr,effOne,o,init){
           const need=gridNeed(month,series,i,cap,o.horizon);
           const room=Math.min((need-pv-gr)/effOne,(cap-pvRes-pv-gr)/effOne);
           const ch=Math.min(pw,Math.max(0,room));
-          if(ch>0){gr+=ch*effOne;impNight+=ch;thru+=ch;pw-=ch;}
+          if(ch>0){gr+=ch*effOne;impNight+=ch;thru+=ch;pw-=ch;g+=ch;}
         }
       }else impDay+=g;
     }
@@ -1202,11 +1202,14 @@ function monthCard(m,rows,grids,variants,prices,cov,sh){
     </div>`;
 
   const cv=el.querySelector('canvas');
+  // Jedna skala kolorów dla wszystkich wariantów, inaczej mapy nie dałoby się
+  // porównywać między zakładkami — ten sam pobór wychodziłby raz jaśniej, raz ciemniej.
+  let mx=0.001;
+  for(const k of Object.keys(grids)) for(const v of grids[k]) if(Math.abs(v)>mx) mx=Math.abs(v);
   const draw=k=>{
     const g=grids[k],D=m.nDays,CELL=14;
     cv.width=24*CELL; cv.height=D*CELL;
     const ctx=cv.getContext('2d');
-    const mx=Math.max(0.001,...g.map(Math.abs));
     for(let d=0;d<D;d++)for(let h=0;h<24;h++){
       const v=g[d*24+h]??0,t=Math.min(1,Math.abs(v)/mx);
       ctx.fillStyle=v>=0?`rgba(242,165,65,${0.06+0.94*t})`:`rgba(95,211,154,${0.15+0.85*t})`;
