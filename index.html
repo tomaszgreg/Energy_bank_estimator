@@ -17,7 +17,7 @@
 
   SPDX-License-Identifier: GPL-2.0-only
 
-  Wersja 17 (2026-08-22)
+  Wersja 19 (2026-08-22)
 -->
 <html lang="pl">
 <head>
@@ -147,6 +147,9 @@ button.alt:hover{border-color:var(--night)}
 .pb-big.slow{color:var(--day)}
 .pb-big.never{color:var(--bad);font-size:20px}
 .pb-unit{font-size:11px;color:var(--ink-dim)}
+.vbadge{display:inline-block;background:var(--panel-2);border:1px solid var(--line);
+  border-radius:3px;padding:1px 7px;margin-right:8px;font-size:11px;color:var(--night);
+  letter-spacing:.04em;vertical-align:1px}
 footer.lic{margin-top:30px;padding-top:16px;border-top:1px solid var(--line);
   font-size:11px;color:var(--ink-dim);line-height:1.6}
 footer.lic p{margin:0 0 7px}
@@ -162,7 +165,7 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
 
 <header>
   <h1>Magazyn <span>energii</span><br>kalkulator taryf</h1>
-  <div class="sub">Wczytaj godzinowe pliki XLS z ePGE i porównaj cztery warianty rozliczenia:
+  <div class="sub"><span id="wersjaNagl" class="vbadge">v—</span>Wczytaj godzinowe pliki XLS z ePGE i porównaj cztery warianty rozliczenia:
     G11 bez magazynu, G12 bez magazynu oraz G12 z magazynem o dwóch pojemnościach.
     Nadwyżki wyceniane godzinowo po RCE, depozyt przenosi się między miesiącami.</div>
   <div class="ribbon" id="ribbon"></div>
@@ -489,11 +492,14 @@ async function readXlsx(buf){
 }
 
 /* ============ wersja ============ */
-const APP_VERSION='17';
+const APP_VERSION='19';
 const APP_DATE='2026-08-22';
 document.addEventListener('DOMContentLoaded',()=>{
   const el=document.getElementById('wersja');
   if(el) el.textContent='wersja '+APP_VERSION+' z '+APP_DATE;
+  const hd=document.getElementById('wersjaNagl');
+  if(hd) hd.textContent='v'+APP_VERSION;
+  document.title='Magazyn energii — kalkulator taryf v'+APP_VERSION;
 });
 
 /* ============ strefy G12 ============ */
@@ -614,32 +620,43 @@ function forgetDays(year,month){          // przed ponownym pobraniem, żeby nie
   for(let d=1;d<=last;d++) delete RCE[`${year}-${pad(month)}-${pad(d)}`];
 }
 
-async function fetchRceForMonth(m){
+async function fetchRceForMonth(m,progress){
+  // Pobieramy dzień po dniu (96 rekordów kwadransowych), bo przy dłuższych
+  // zakresach API zwraca tylko pierwszą stronę i reszta doby przepada.
+  // Dodatkowo idziemy za nextLink, gdyby i doba została podzielona.
   forgetDays(m.year,m.month);
-  const last=new Date(Date.UTC(m.year,m.month,0)).getUTCDate();
   const pad=n=>String(n).padStart(2,'0');
-  let got=0;
-  for(let a=1;a<=last;a+=7){
-    const b=Math.min(a+6,last);
-    const from=`${m.year}-${pad(m.month)}-${pad(a)}`, to=`${m.year}-${pad(m.month)}-${pad(b)}`;
-    const url=encodeURI(`https://api.raporty.pse.pl/api/rce-pln?$filter=business_date ge '${from}' and business_date le '${to}'`);
-    const res=await fetch(url);
-    if(!res.ok) throw new Error('PSE odpowiedziało kodem '+res.status);
-    const js=await res.json();
-    for(const rec of (js.value||js||[])){
-      const date=(rec.business_date||String(rec.dtime||'').slice(0,10)).slice(0,10);
-      let hour=null;
-      const per=String(rec.period||rec.udtczas_oreb||'');
-      let mm=per.match(/^(\d{1,2}):(\d{2})/);
-      if(mm) hour=+mm[1];
-      else{const dt=String(rec.dtime||rec.udtczas||'');
-           const m2=dt.match(/[ T](\d{1,2}):(\d{2})/); if(m2) hour=+m2[1];}
-      const v=rec.rce_pln;
-      if(date&&hour!==null&&v!=null&&isFinite(+v)){addRcePoint(date,hour,+v);got++;}
+  const last=new Date(Date.UTC(m.year,m.month,0)).getUTCDate();
+  let got=0, braki=[];
+  for(let d=1;d<=last;d++){
+    const date=`${m.year}-${pad(m.month)}-${pad(d)}`;
+    if(progress) progress(d,last);
+    let url=encodeURI(`https://api.raporty.pse.pl/api/rce-pln?$filter=business_date eq '${date}'`);
+    let n=0, guard=0;
+    while(url&&guard++<20){
+      const res=await fetch(url);
+      if(!res.ok) throw new Error('PSE odpowiedziało kodem '+res.status);
+      const js=await res.json();
+      for(const rec of (js.value||js||[])){
+        const dt=(rec.business_date||String(rec.dtime||'').slice(0,10)).slice(0,10);
+        let hour=null;
+        const per=String(rec.period||rec.udtczas_oreb||'');
+        const mm=per.match(/^(\d{1,2}):(\d{2})/);
+        if(mm) hour=+mm[1];
+        else{const s2=String(rec.dtime||rec.udtczas||'');
+             const m2=s2.match(/[ T](\d{1,2}):(\d{2})/); if(m2) hour=+m2[1];}
+        const v=rec.rce_pln;
+        if(dt&&hour!==null&&v!=null&&isFinite(+v)){addRcePoint(dt,hour,+v);n++;got++;}
+      }
+      let nx=js.nextLink||js['@odata.nextLink']||js['nextlink']||null;
+      if(nx&&!/^https?:/i.test(nx)) nx='https://api.raporty.pse.pl/api/'+String(nx).replace(/^\/?api\//,'');
+      url=nx;
     }
+    if(n<24) braki.push(d);
   }
   if(!got) throw new Error('PSE nie zwróciło danych dla tego miesiąca');
   rceSource[m.key]='PSE';
+  if(braki.length) throw new Error('niekompletne dni: '+braki.join(', '));
 }
 
 function parseRceFile(text,name){
@@ -1066,8 +1083,9 @@ document.getElementById('fetchRce').onclick=async ()=>{
   btn.disabled=true;
   const bad=[];
   for(const m of MONTHS){
-    btn.textContent='Pobieram '+m.label+'…';
-    try{await fetchRceForMonth(m)}catch(e){bad.push(m.label+' — '+e.message)}
+    try{
+      await fetchRceForMonth(m,(d,n)=>{btn.textContent=m.label+' '+d+'/'+n});
+    }catch(e){bad.push(m.label+' — '+e.message)}
   }
   btn.textContent=old; btn.disabled=false;
   if(bad.length) rceErr.textContent='Nie udało się pobrać:\n'+bad.join('\n')+
