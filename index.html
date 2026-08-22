@@ -723,6 +723,20 @@ function lookahead(series,prices,i,cap,horizon,nightAt){
 // w nadchodzącym bloku drogiej strefy ponad to, co pokryje własna produkcja.
 // Zimą wychodzi cała pojemność, latem prawie zero — dzięki temu rano
 // zostaje miejsce na PV, zamiast blokować magazyn energią kupioną z sieci.
+// Wersja dla planu cenowego: godziny rozładowania są rozrzucone po dobie,
+// więc nie można przerwać liczenia na pierwszej godzinie spoza szczytu.
+// Sumujemy cały zaplanowany rozładunek aż do następnej okazji do ładowania.
+function gridNeedPlan(disAt,chargeAt,series,i,cap,horizon){
+  let need=0,seenDis=false;
+  for(let j=i+1;j<series.length&&j<i+horizon;j++){
+    if(chargeAt(j)&&seenDis) break;
+    if(disAt(j)){
+      seenDis=true;
+      if(series[j]>0){ need+=series[j]; if(need>=cap) return cap; }
+    }
+  }
+  return Math.min(need,cap);
+}
 function gridNeed(nightAt,series,i,cap,horizon){
   let need=0,seenDay=false;
   for(let j=i+1;j<series.length&&j<i+horizon;j++){
@@ -782,7 +796,9 @@ function simulate(month,series,cap,powr,effOne,o,init){
       if(night){
         impNight+=g;
         if(cap>0){                                      // nocne ładowanie z sieci
-          const need=gridNeed(notDis,series,i,cap,o.horizon);
+          const need=o.disArr
+            ? gridNeedPlan(disAt,nightAt,series,i,cap,o.horizon)
+            : gridNeed(notDis,series,i,cap,o.horizon);
           const room=Math.min((need-pv-gr)/effOne,(cap-pvRes-pv-gr)/effOne);
           const ch=Math.min(pw,Math.max(0,room));
           if(ch>0){gr+=ch*effOne;impNight+=ch;thru+=ch;pw-=ch;g+=ch;}
