@@ -17,7 +17,7 @@
 
   SPDX-License-Identifier: GPL-2.0-only
 
-  Wersja 19 (2026-08-22)
+  Wersja 20 (2026-08-22)
 -->
 <html lang="pl">
 <head>
@@ -142,10 +142,12 @@ button.alt:hover{border-color:var(--night)}
 .pb-row{display:flex;justify-content:space-between;gap:8px;font-size:12px;
   color:var(--ink-dim);padding:2px 0}
 .pb-row b{color:var(--ink);font-weight:500}
-.pb-big{font-family:var(--display);font-size:30px;line-height:1.05;color:var(--pv);
-  margin:8px 0 2px;letter-spacing:.01em}
-.pb-big.slow{color:var(--day)}
-.pb-big.never{color:var(--bad);font-size:20px}
+.pb-cmp{border-top:1px solid var(--line);margin-top:9px;padding-top:7px}
+.pb-cmp .lbl{font-size:10px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-dim);margin-bottom:3px}
+.pb-big2{font-family:var(--display);font-size:22px;line-height:1.1;color:var(--pv);margin-top:2px}
+.pb-big2.never{color:var(--bad);font-size:16px}
+.pb-never{font-family:var(--display)}
 .pb-unit{font-size:11px;color:var(--ink-dim)}
 .vbadge{display:inline-block;background:var(--panel-2);border:1px solid var(--line);
   border-radius:3px;padding:1px 7px;margin-right:8px;font-size:11px;color:var(--night);
@@ -492,7 +494,7 @@ async function readXlsx(buf){
 }
 
 /* ============ wersja ============ */
-const APP_VERSION='19';
+const APP_VERSION='20';
 const APP_DATE='2026-08-22';
 document.addEventListener('DOMContentLoaded',()=>{
   const el=document.getElementById('wersja');
@@ -1391,30 +1393,32 @@ addEventListener('orientationchange',()=>setTimeout(redrawAll,250));
 function paybackBlock(variants,totals,nMonths){
   const bat=variants.filter(v=>v.cap>0);
   if(!bat.length) return '';
+  const g11=variants[0];
   const items=bat.map(v=>{
-    const base=variants.find(b=>b.cap===0&&b.g12===v.g12&&b.shift===v.shift&&
-                              !!b.dyn===!!v.dyn)||variants[0];
-    const save=totals[base.id].pay-totals[v.id].pay;
-    const perMonth=save/nMonths;
-    const months=perMonth>0?v.price/perMonth:Infinity;
-    return {v,base,perMonth,months};
+    const same=variants.find(b=>b.cap===0&&b.g12===v.g12&&b.shift===v.shift&&
+                                !!b.dyn===!!v.dyn)||g11;
+    const licz=base=>{
+      const save=(totals[base.id].pay-totals[v.id].pay)/nMonths;
+      return {base,save,months:save>0?v.price/save:Infinity};
+    };
+    return {v,wG11:licz(g11),wSame:licz(same),sameName:same.name};
   });
-  const body=items.map(it=>{
-    const m=it.months;
-    const cls=!isFinite(m)?'never':(m>180?'slow':'');
-    const big=!isFinite(m)?'brak zwrotu'
-      :fmt(m,0)+' <span class="pb-unit">mies.</span>';
-    return '<div class="pb-item"><h4>'+it.v.name+'</h4>'+
-      '<div class="pb-row"><span>cena</span><b>'+zl(it.v.price)+'</b></div>'+
-      '<div class="pb-row"><span>za kWh pojemności</span><b>'+
-        zl(it.v.price/it.v.cap)+'</b></div>'+
-      '<div class="pb-row"><span>odniesienie</span><b>'+it.base.name+'</b></div>'+
-      '<div class="pb-row"><span>oszczędność / mies.</span><b>'+zl(it.perMonth)+'</b></div>'+
-      '<div class="pb-big '+cls+'">'+big+'</div>'+
-      (isFinite(m)?'<div class="pb-unit">czyli '+fmt(m/12,1)+' roku</div>':
-        '<div class="pb-unit">ten wariant nie jest tańszy od odniesienia</div>')+
-      '</div>';
-  }).join('');
+  const zwrot=x=>{
+    if(!isFinite(x.months)) return '<span class="pb-never">brak zwrotu</span>';
+    return '<b>'+fmt(x.months,0)+' mies.</b> <span class="pb-unit">('+
+           fmt(x.months/12,1)+' roku)</span>';
+  };
+  const body=items.map(it=>
+    '<div class="pb-item"><h4>'+it.v.name+'</h4>'+
+    '<div class="pb-row"><span>cena</span><b>'+zl(it.v.price)+'</b></div>'+
+    '<div class="pb-row"><span>za kWh pojemności</span><b>'+zl(it.v.price/it.v.cap)+'</b></div>'+
+    '<div class="pb-cmp"><div class="lbl">względem G11 — czy w ogóle warto</div>'+
+      '<div class="pb-row"><span>oszczędność / mies.</span><b>'+zl(it.wG11.save)+'</b></div>'+
+      '<div class="pb-big2 '+(isFinite(it.wG11.months)?'':'never')+'">'+zwrot(it.wG11)+'</div></div>'+
+    '<div class="pb-cmp"><div class="lbl">względem „'+it.sameName+'” — wartość samego magazynu</div>'+
+      '<div class="pb-row"><span>oszczędność / mies.</span><b>'+zl(it.wSame.save)+'</b></div>'+
+      '<div class="pb-big2 '+(isFinite(it.wSame.months)?'':'never')+'">'+zwrot(it.wSame)+'</div></div>'+
+    '</div>').join('');
   const warn=nMonths<12
     ? '<p class="note">Uwaga: policzone z '+nMonths+' '+(nMonths===1?'miesiąca':'mies.')+
       ', a nie z pełnego roku. Jeśli to miesiące zimowe, oszczędność jest zawyżona i zwrot '+
@@ -1423,9 +1427,10 @@ function paybackBlock(variants,totals,nMonths){
   return '<h3 style="font-family:var(--display);text-transform:uppercase;letter-spacing:.06em;'+
     'font-size:16px;margin:0 0 4px;color:var(--ink-dim)">Czas zwrotu</h3>'+
     '<div class="pb">'+body+'</div>'+warn+
-    ' Zwrot prosty: cena podzielona przez średnią miesięczną oszczędność, bez kosztu '+
-    'kapitału, degradacji ogniw i zmian stawek. Odniesieniem jest ten sam wariant bez '+
-    'magazynu, więc liczba mówi o wartości samego akumulatora.</p>';
+    ' Zwrot prosty: cena podzielona przez średnią miesięczną oszczędność, bez kosztu kapitału, '+
+    'degradacji ogniw i zmian stawek. Pierwsza liczba mówi, czy przejście z obecnej taryfy G11 '+
+    'na dany wariant się zwraca — to ona odpowiada na pytanie o sens zakupu. Druga izoluje sam '+
+    'magazyn od zmiany taryfy, która nic nie kosztuje.</p>';
 }
 
 /* ============ przemiatanie pojemności ============ */
