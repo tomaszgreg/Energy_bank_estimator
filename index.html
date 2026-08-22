@@ -257,8 +257,8 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
       <div><label>wariant A — moc kW</label><input id="powA" value="7"></div>
       <div><label>wariant B — pojemność kWh</label><input id="capB" value="28"></div>
       <div><label>wariant B — moc kW</label><input id="powB" value="12"></div>
-      <div><label>wariant A — cena zł</label><input id="priceA" value="16000"></div>
-      <div><label>wariant B — cena zł</label><input id="priceB" value="30000"></div>
+      <div><label>wariant A — cena zł</label><input id="priceA" value="8500"></div>
+      <div><label>wariant B — cena zł</label><input id="priceB" value="16000"></div>
       <div><label>sprawność cyklu %</label><input id="eff" value="90"></div>
       <div><label>VAT %</label><input id="vat" value="23"></div>
     </div>
@@ -268,6 +268,8 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
     <div class="sub-h">Sprzedaż z magazynu</div>
     <div class="check"><input type="checkbox" id="sell" checked>
       <span>oddawaj energię z magazynu w drogich godzinach</span></div>
+    <div class="check"><input type="checkbox" id="selfFirst">
+      <span>priorytet samowystarczalności — nie dokupuj nocą, żeby sprzedać wieczorem</span></div>
     <div class="check"><input type="checkbox" id="autoThr" checked>
       <span>próg automatyczny — sprzedawaj tylko wtedy, gdy to bije autokonsumpcję</span></div>
     <div class="grid">
@@ -286,11 +288,17 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
       jutro w południe po cenie dołka, więc sprzedaje się ją bez progu, w najlepiej płatnej godzinie
       przed kolejnym naładowaniem. Tolerancja szczytu decyduje, jak blisko lokalnego maksimum ceny
       musi być bieżąca godzina, żeby uznać ją za dobry moment.</p>
+    <p class="note">W tanich godzinach magazyn zasila dom własną energią ze słońca, o ile uniknięty
+      koszt zakupu bije najlepszą nadchodzącą cenę eksportu. Gdy eksport płaci lepiej, opłaca się
+      dokupić prąd nocą i sprzedać własny wieczorem — ale to działa tylko dopóki depozyt da się
+      wykorzystać. Jeśli budujesz go więcej, niż wynosi roczna wartość energii czynnej na rachunku,
+      nadwyżka przepada ze zwrotem 30% i wtedy lepiej włączyć priorytet samowystarczalności.</p>
 
     <div class="sub-h">Rozliczenie nadwyżek</div>
     <div class="grid">
       <div><label>współczynnik korekcyjny</label><input id="corr" value="1.23"></div>
       <div><label>cena zastępcza zł/MWh</label><input id="flatRce" value="350"></div>
+      <div><label>zwrot za przeterminowany %</label><input id="refundPct" value="30"></div>
     </div>
     <div class="check"><input type="checkbox" id="clipNeg" checked>
       <span>ujemne RCE liczone jako zero</span></div>
@@ -647,16 +655,17 @@ function parseRceFile(text,name){
 //    oddanie jutro w południe po cenie dołka albo brak miejsca na produkcję.
 //    Sprzedajemy ją w najlepiej płatnej godzinie przed kolejnym naładowaniem,
 //    już bez progu opłacalności.
-function lookahead(series,prices,i,cap,horizon){
-  let load=0,surplus=0,peak=prices[i];
+function lookahead(series,prices,i,cap,horizon,month){
+  let load=0,loadDay=0,surplus=0,peak=prices[i];
   const n=series.length;
   for(let j=i+1;j<n&&j<i+horizon;j++){
     if(prices[j]>peak) peak=prices[j];
     const v=series[j];
-    if(v>0){ load+=v; if(load>=cap) return {res:cap,peak}; }
+    if(v>0){ load+=v; if(!isNight(month,j%24)) loadDay+=v;
+             if(load>=cap) return {res:cap,resDay:Math.min(loadDay,cap),peak}; }
     else   { surplus-=v; if(surplus>=cap) break; }
   }
-  return {res:Math.min(load,cap),peak};
+  return {res:Math.min(load,cap),resDay:Math.min(loadDay,cap),peak};
 }
 // Ile energii z sieci warto dokupić w nocy: tylko tyle, ile dom pobierze
 // w nadchodzącym bloku drogiej strefy ponad to, co pokryje własna produkcja.
@@ -699,6 +708,16 @@ function simulate(month,series,cap,powr,effOne,o,init){
         gr-=fromGr; pv-=(dis/effOne-fromGr);
         thru+=dis; pw-=dis; g+=v-dis;
       }else g+=v;
+      if(night&&cap>0&&g>0&&pv>0){
+        // Zasilenie domu własnym PV w tanich godzinach, gdy uniknięty koszt bije
+        // najlepszą nadchodzącą cenę eksportu. Bez tego magazyn trzymał rezerwę,
+        // której nigdy nie wydawał, a dom i tak kupował z sieci.
+        const la=lookahead(series,o.prices,i,cap,o.horizon,month);
+        if(!o.sell||la.peak/1000*o.corr<o.retailNight){
+          const dis=Math.min(g,pw,pv*effOne);
+          if(dis>0){pv-=dis/effOne;thru+=dis;pw-=dis;g-=dis;}
+        }
+      }
       if(night){
         impNight+=g;
         if(cap>0){                                      // nocne ładowanie z sieci
@@ -711,8 +730,10 @@ function simulate(month,series,cap,powr,effOne,o,init){
     }
 
     if(o.sell&&cap>0&&pv>0&&pw>0){
-      const la=lookahead(series,o.prices,i,cap,o.horizon);
-      const needPv=Math.max(0,la.res-gr*effOne);        // ile PV zostawić dla domu
+      const la=lookahead(series,o.prices,i,cap,o.horizon,month);
+      // Rezerwę na noc odkładamy tylko wtedy, gdy faktycznie zostanie zużyta.
+      const res=(!o.sell||la.peak/1000*o.corr<o.retailNight)?la.res:la.resDay;
+      const needPv=Math.max(0,res-gr*effOne);        // ile PV zostawić dla domu
       const spare=Math.max(0,pv*effOne-needPv);
       let out=0;
       if(spare>0 && o.prices[i]>=o.floor && o.prices[i]>=o.peakF*la.peak){
@@ -788,11 +809,13 @@ function depNew(){return {b:[]}}
 function depClone(D){return {b:D.b.map(x=>({orig:x.orig,rem:x.rem,age:x.age}))}}
 function depBal(D){return D.b.reduce((a,x)=>a+x.rem,0)}
 function depAdd(D,v){if(v>1e-9) D.b.push({orig:v,rem:v,age:0})}
-function depAge(D){                      // na początku każdego miesiąca
+// Zwrot niewykorzystanego depozytu: do 20% przy rozliczeniu miesięcznym (RCEm),
+// do 30% przy godzinowym (RCE) — stąd pole w ustawieniach.
+function depAge(D,pct){                  // na początku każdego miesiąca
   let refund=0;
   D.b.forEach(x=>x.age++);
   D.b=D.b.filter(x=>{
-    if(x.age>12){refund+=Math.min(x.rem,0.20*x.orig); return false}
+    if(x.age>12){refund+=Math.min(x.rem,pct*x.orig); return false}
     return true;
   });
   return refund;
@@ -1010,7 +1033,7 @@ function onePass(variants,opt0,cfg,startDep,startBat){
       const s=simulate(m.month,series,v.cap,v.pow,cfg.effOne,opt,bat[v.id]);
       bat[v.id]={pv:s.pv,gr:s.gr};
       const c=cost(s,v.g12);
-      const refund=depAge(dep[v.id]);                       // przeterminowane koszyki
+      const refund=depAge(dep[v.id],cfg.refundPct);                       // przeterminowane koszyki
       const eBill=cfg.depGross?c.energy*cfg.vat:c.energy;   // co depozyt może pomniejszyć
       const used=depUse(dep[v.id],eBill);
       const d=depositFor(m,s.grid,prices,cfg.corr); depAdd(dep[v.id],d.dep);
@@ -1034,7 +1057,8 @@ function run(){
     clip:document.getElementById('clipNeg').checked, flat:P('flatRce'),
     depGross:document.getElementById('depGross').checked,
     shiftG11:document.getElementById('shiftG11').checked,
-    shiftOn:document.getElementById('shiftOn').checked};
+    shiftOn:document.getElementById('shiftOn').checked,
+    refundPct:Math.max(0,Math.min(1,P('refundPct')/100))};
   document.getElementById('shiftGrid').style.opacity=cfg.shiftOn?'1':'.4';
   document.getElementById('shiftG11').disabled=!cfg.shiftOn;
   const capA=P('capA'),powA=P('powA'),capB=P('capB'),powB=P('powB');
@@ -1043,7 +1067,9 @@ function run(){
               autoThr:document.getElementById('autoThr').checked,
               thr:P('thr'), pvRes:P('pvRes'), corr,
               floor:P('floor'), peakF:P('peakF')/100, horizon:Math.max(6,P('horizon')),
-              retailDay:(P('eG12d')+P('sG12d')+P('addv'))*vat};
+              retailDay:(P('eG12d')+P('sG12d')+P('addv'))*vat,
+              retailNight:document.getElementById('selfFirst').checked
+                ? 1e9 : (P('eG12n')+P('sG12n')+P('addv'))*vat};
   // Warianty z przesunięciem dochodzą jako osobne wiersze, żeby w jednej
   // tabeli stały obok siebie te same konfiguracje bez i z nocnym doładowaniem.
   const anyShift=cfg.shiftOn&&MONTHS.some(m=>{
