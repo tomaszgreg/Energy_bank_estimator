@@ -658,6 +658,43 @@ function parseRceFile(text,name){
   if(!got) throw new Error(name+' — nie rozpoznano żadnego wiersza');
 }
 
+/* ============ plan wg cen (merit order) ============ */
+// Zamiast dzielić dobę na tanie i drogie połowy, dla każdego dnia wybieramy
+// konkretne godziny: rozładowanie w najdroższych godzinach z realnym poborem,
+// aż do wyczerpania pojemności, i ładowanie w najtańszych — ale tylko wtedy,
+// gdy różnica cen pokrywa straty cyklu. Godziny pośrednie zostają bezczynne,
+// dzięki czemu magazyn nie rozmienia się na drobne przed szczytem.
+function planPriceZones(prices,series,cap,pow,effOne,vat,fixedPart){
+  const n=prices.length;
+  const cheap=new Uint8Array(n), dis=new Uint8Array(n);
+  if(cap<=0) return {cheap,dis};
+  const cost=i=>(prices[i]/1000+fixedPart)*vat;     // cena zakupu tej godziny, brutto
+  for(let d0=0;d0<n;d0+=24){
+    const hrs=[];
+    for(let i=d0;i<Math.min(n,d0+24);i++) hrs.push(i);
+    if(!hrs.length) continue;
+    const asc=[...hrs].sort((a,b)=>cost(a)-cost(b));
+    const tani=cost(asc[0]);                        // odniesienie dla progu opłacalności
+    const desc=[...hrs].sort((a,b)=>cost(b)-cost(a));
+    let budget=cap, need=0;
+    for(const h of desc){
+      const load=Math.max(0,series[h]);
+      if(load<=0) continue;
+      if(cost(h)<=tani/(effOne*effOne)+0.01) break; // różnica nie pokrywa strat
+      const take=Math.min(load,pow,budget);
+      if(take<=1e-6) break;
+      dis[h]=1; budget-=take; need+=take;
+    }
+    let doNaladowania=need/effOne;
+    for(const h of asc){
+      if(doNaladowania<=1e-6) break;
+      if(dis[h]) continue;
+      cheap[h]=1; doNaladowania-=Math.min(pow,doNaladowania);
+    }
+  }
+  return {cheap,dis};
+}
+
 /* ============ symulacja ============ */
 // Magazyn prowadzi dwa salda: pv (energia ze słońca, wolno ją sprzedać)
 // i gr (energia kupiona z sieci, wolno ją tylko zużyć w domu).
@@ -705,6 +742,10 @@ function simulate(month,series,cap,powr,effOne,o,init){
   let impDay=0,impNight=0,expPv=0,expBat=0,expSpare=0,thru=0;
   // W taryfie strefowej o tym, co tanie, decyduje pora doby; w dynamicznej — sama cena.
   const nightAt = o.cheapArr ? (j)=>!!o.cheapArr[j] : (j)=>isNight(month,j%24);
+  // Gdy jest plan cenowy, rozładowanie dozwolone tylko w wybranych godzinach;
+  // bez planu — w każdej godzinie spoza taniej strefy, jak dotąd.
+  const disAt = o.disArr ? (j)=>!!o.disArr[j] : (j)=>!nightAt(j);
+  const notDis = (j)=>!disAt(j);
   const rD = o.retailArr ? (i)=>o.retailArr[i] : (i)=>o.retailDay;
   const rN = o.selfFirst ? ()=>1e9
            : (o.retailArr ? (i)=>o.retailArr[i] : ()=>o.retailNight);
@@ -722,7 +763,7 @@ function simulate(month,series,cap,powr,effOne,o,init){
       pv+=in_*effOne; thru+=in_; pw-=in_;
       const e=s-in_; expPv+=e; g-=e;
     }else{
-      if(cap>0&&!night){                                // dom ma pierwszeństwo
+      if(cap>0&&disAt(i)){                              // dom ma pierwszeństwo
         const dis=Math.min(v,pw,(pv+gr)*effOne);
         const fromGr=Math.min(gr,dis/effOne);           // najpierw energia z sieci
         gr-=fromGr; pv-=(dis/effOne-fromGr);
@@ -732,7 +773,7 @@ function simulate(month,series,cap,powr,effOne,o,init){
         // Zasilenie domu własnym PV w tanich godzinach, gdy uniknięty koszt bije
         // najlepszą nadchodzącą cenę eksportu. Bez tego magazyn trzymał rezerwę,
         // której nigdy nie wydawał, a dom i tak kupował z sieci.
-        const la=lookahead(series,o.prices,i,cap,o.horizon,nightAt);
+        const la=lookahead(series,o.prices,i,cap,o.horizon,notDis);
         if(!o.sell||la.peak/1000*o.corr<rN(i)){
           const dis=Math.min(g,pw,pv*effOne);
           if(dis>0){pv-=dis/effOne;thru+=dis;pw-=dis;g-=dis;}
@@ -741,7 +782,7 @@ function simulate(month,series,cap,powr,effOne,o,init){
       if(night){
         impNight+=g;
         if(cap>0){                                      // nocne ładowanie z sieci
-          const need=gridNeed(nightAt,series,i,cap,o.horizon);
+          const need=gridNeed(notDis,series,i,cap,o.horizon);
           const room=Math.min((need-pv-gr)/effOne,(cap-pvRes-pv-gr)/effOne);
           const ch=Math.min(pw,Math.max(0,room));
           if(ch>0){gr+=ch*effOne;impNight+=ch;thru+=ch;pw-=ch;g+=ch;}
@@ -750,7 +791,7 @@ function simulate(month,series,cap,powr,effOne,o,init){
     }
 
     if(o.sell&&cap>0&&pv>0&&pw>0){
-      const la=lookahead(series,o.prices,i,cap,o.horizon,nightAt);
+      const la=lookahead(series,o.prices,i,cap,o.horizon,notDis);
       // Rezerwę na noc odkładamy tylko wtedy, gdy faktycznie zostanie zużyta.
       const res=(!o.sell||la.peak/1000*o.corr<rN(i))?la.res:la.resDay;
       const needPv=Math.max(0,res-gr*effOne);        // ile PV zostawić dla domu
@@ -1075,7 +1116,15 @@ function onePass(variants,opt0,cfg,startDep,startBat){
     const rows=[],grids={};
     variants.forEach(v=>{
       const series=v.shift?sh.series:m.series;
-      const vo=v.dyn?Object.assign({},opt,{retailArr:dynRetail,cheapArr:dynCheap}):opt;
+      let vo=opt;
+      if(v.dyn){
+        vo=Object.assign({},opt,{retailArr:dynRetail,cheapArr:dynCheap});
+        if(v.cap>0){
+          const pl=planPriceZones(prices,v.shift?sh.series:m.series,v.cap,v.pow,
+                                  cfg.effOne,cfg.vat,fixedPart);
+          vo.cheapArr=pl.cheap; vo.disArr=pl.dis;
+        }
+      }
       const s=simulate(m.month,series,v.cap,v.pow,cfg.effOne,vo,bat[v.id]);
       bat[v.id]={pv:s.pv,gr:s.gr};
       const c=cost(s,v.g12,v,prices,cfg);
