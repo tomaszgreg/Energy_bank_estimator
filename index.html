@@ -17,7 +17,7 @@
 
   SPDX-License-Identifier: GPL-2.0-only
 
-  Wersja 38 (2026-08-22)
+  Wersja 39 (2026-08-22)
 -->
 <html lang="pl">
 <head>
@@ -549,7 +549,7 @@ async function readXlsx(buf){
 }
 
 /* ============ wersja ============ */
-const APP_VERSION='38';
+const APP_VERSION='39';
 const APP_DATE='2026-08-22';
 document.addEventListener('DOMContentLoaded',()=>{
   const el=document.getElementById('wersja');
@@ -1895,6 +1895,20 @@ function monthCard(m,rows,grids,variants,prices,cov,sh,plany){
     koszty[v.id]=arr;
   }
   let tryb='kwh', sel=null;
+  const CELL=14, ODST=7;                 // rozmiar komórki i odstęp przed kolumną sumy
+  // Sumy dobowe liczone raz dla obu trybów; mają własną skalę kolorów, bo są
+  // o rząd wielkości większe od pojedynczych godzin.
+  function sumyDobowe(zrodlo){
+    const out={};
+    for(const k of Object.keys(zrodlo)){
+      const a=new Float64Array(m.nDays);
+      for(let d=0;d<m.nDays;d++){let x=0;
+        for(let h=0;h<24;h++) x+=zrodlo[k][d*24+h]||0;
+        a[d]=x;}
+      out[k]=a;
+    }
+    return out;
+  }
   const cv=el.querySelector('canvas');
   // Jedna skala kolorów dla wszystkich wariantów, inaczej mapy nie dałoby się
   // porównywać między zakładkami. Górę skali bierzemy z 95. percentyla, a nie
@@ -1911,8 +1925,9 @@ function monthCard(m,rows,grids,variants,prices,cov,sh,plany){
   const draw=k=>{
     const zrodlo=tryb==='kwh'?grids:koszty;
     const mx=skala(zrodlo);
-    const g=zrodlo[k],D=m.nDays,CELL=14;
-    cv.width=24*CELL; cv.height=D*CELL;
+    const sumy=sumyDobowe(zrodlo), mxS=skala(sumy);
+    const g=zrodlo[k],D=m.nDays;
+    cv.width=24*CELL+ODST+CELL; cv.height=D*CELL;
     const ctx=cv.getContext('2d');
     for(let d=0;d<D;d++)for(let h=0;h<24;h++){
       const v=g[d*24+h]??0;
@@ -1923,11 +1938,21 @@ function monthCard(m,rows,grids,variants,prices,cov,sh,plany){
       ctx.fillRect(h*CELL,d*CELL,CELL-1,CELL-1);
       if(isNight(m.month,h)){ctx.fillStyle='rgba(63,167,214,.16)';ctx.fillRect(h*CELL,d*CELL,CELL-1,2);}
     }
+    // 25. kolumna: suma całej doby, po odstępie
+    const xs=24*CELL+ODST;
+    for(let d=0;d<D;d++){
+      const v=sumy[k][d];
+      const t=Math.pow(Math.min(1,Math.abs(v)/mxS),0.62);
+      ctx.fillStyle = Math.abs(v)<0.01 ? 'rgba(255,255,255,0.035)'
+        : (v>0?`rgba(242,165,65,${0.20+0.80*t})`:`rgba(95,211,154,${0.28+0.72*t})`);
+      ctx.fillRect(xs,d*CELL,CELL-1,CELL-1);
+    }
     if(sel){                                   // ramka wokół wybranej komórki
+      const x0=sel.h<0?xs:sel.h*CELL;
       ctx.strokeStyle='#e6edf7'; ctx.lineWidth=2;
-      ctx.strokeRect(sel.h*CELL-1,sel.d*CELL-1,CELL+1,CELL+1);
+      ctx.strokeRect(x0-1,sel.d*CELL-1,CELL+1,CELL+1);
       ctx.strokeStyle='rgba(13,20,32,.8)'; ctx.lineWidth=1;
-      ctx.strokeRect(sel.h*CELL-2.5,sel.d*CELL-2.5,CELL+4,CELL+4);
+      ctx.strokeRect(x0-2.5,sel.d*CELL-2.5,CELL+4,CELL+4);
     }
   };
   const leg=el.querySelector('[data-rola="legenda"]');
@@ -1937,11 +1962,11 @@ function monthCard(m,rows,grids,variants,prices,cov,sh,plany){
       ? '<span><i style="background:var(--day)"></i>pobór z sieci — im jaśniej, tym więcej</span>'+
         '<span><i style="background:var(--pv)"></i>oddawanie do sieci</span>'+
         '<span><i style="background:rgba(255,255,255,.05)"></i>zerowy pobór — magazyn pokrywa całość</span>'+
-        '<span>poziomo: godziny 0–24 · pionowo: kolejne dni</span>'
+        '<span>poziomo: godziny 0–24, po odstępie suma doby · pionowo: kolejne dni</span>'
       : '<span><i style="background:var(--day)"></i>zapłacone w tej godzinie — im jaśniej, tym drożej</span>'+
         '<span><i style="background:var(--pv)"></i>depozyt za energię oddaną</span>'+
         '<span><i style="background:rgba(255,255,255,.05)"></i>zero złotych</span>'+
-        '<span>cena energii + dystrybucja + opłaty, brutto</span>';
+        '<span>cena energii + dystrybucja + opłaty, brutto · ostatnia kolumna to suma doby</span>';
   }
   el.querySelectorAll('.tabs:not([data-rola]) .tab').forEach(b=>b.onclick=()=>{
     el.querySelectorAll('.tabs:not([data-rola]) .tab')
@@ -1958,8 +1983,8 @@ function monthCard(m,rows,grids,variants,prices,cov,sh,plany){
     if(!sel){box.innerHTML='';return}
     const dd=sel.d, hh=sel.h;
     const v=variants.find(x=>x.id===aktywny)||variants[0];
-    const i=dd*24+hh, g=grids[aktywny][i], k=koszty[aktywny][i];
-    const noc=isNight(m.month,hh);
+    const i=dd*24+Math.max(0,hh), g=grids[aktywny][i], k=koszty[aktywny][i];
+    const noc=isNight(m.month,Math.max(0,hh));
     const pl=plany[aktywny]||{};
     let stan;
     if(pl.dis&&pl.cheap) stan=pl.cheap[i]?'ładowanie z sieci':pl.dis[i]?'rozładowanie do domu':'bezczynna';
@@ -1976,17 +2001,21 @@ function monthCard(m,rows,grids,variants,prices,cov,sh,plany){
     }
     const kosztTaniej=lo/1000+(v.dystG12?P('sG12n'):P('sG11'))+P('addv')+(v.dyn?P('dynMargin'):0);
     const prog=(kosztTaniej/(P('eff')/100)-kosztTaniej)*1000;
+    const naglowek = hh<0
+      ? m.dates[dd]+' · cała doba — '+v.name
+      : m.dates[dd]+' · '+String(hh).padStart(2,'0')+':00 — '+v.name;
     box.innerHTML='<div class="szczegol">'+
       '<button class="zamknij" title="zamknij">×</button>'+
-      '<h5>'+m.dates[dd]+' · '+String(hh).padStart(2,'0')+':00 — '+v.name+'</h5>'+
+      '<h5>'+naglowek+'</h5>'+
+      (hh<0?'':
       '<div class="w"><span>'+(g>=0?'pobór z sieci':'oddane do sieci')+'</span><b>'+
         fmt(Math.abs(g),2)+' kWh</b></div>'+
       (cenaKwh!==null?'<div class="w"><span>cena zakupu</span><b>'+zl3(cenaKwh)+'/kWh</b></div>':'')+
       '<div class="w"><span>'+(k>=0?'koszt godziny':'depozyt za godzinę')+'</span><b>'+
         zl(Math.abs(k))+'</b></div>'+
       '<div class="w"><span>RCE</span><b>'+fmt(prices[i],0)+' zł/MWh</b></div>'+
-      '<div class="w"><span>tryb magazynu</span><b>'+stan+'</b></div>'+
-      '<div class="sekcja"><div class="w"><span><b>cała doba</b></span><span>'+
+      '<div class="w"><span>tryb magazynu</span><b>'+stan+'</b></div>')+
+      '<div class="sekcja"'+(hh<0?' style="border-top:none;margin-top:0;padding-top:0"':'')+'><div class="w"><span><b>cała doba</b></span><span>'+
         m.dates[dd]+'</span></div>'+
       '<div class="w"><span>pobór / oddane</span><b>'+fmt(pob,1)+' / '+fmt(odd,1)+' kWh</b></div>'+
       '<div class="w"><span>koszt doby</span><b>'+zl(koszt)+'</b></div>'+
@@ -1999,9 +2028,13 @@ function monthCard(m,rows,grids,variants,prices,cov,sh,plany){
   }
   cv.addEventListener('click',ev=>{
     const r=cv.getBoundingClientRect();
-    const hh=Math.floor((ev.clientX-r.left)/r.width*24);
+    const px=(ev.clientX-r.left)/r.width*cv.width;
     const dd=Math.floor((ev.clientY-r.top)/r.height*m.nDays);
-    if(hh<0||hh>23||dd<0||dd>=m.nDays) return;
+    let hh;
+    if(px<24*CELL) hh=Math.floor(px/CELL);
+    else if(px>=24*CELL+ODST) hh=-1;          // kliknięcie w kolumnę sumy
+    else return;
+    if(hh>23||dd<0||dd>=m.nDays) return;
     sel=(sel&&sel.d===dd&&sel.h===hh)?null:{d:dd,h:hh};   // ponowne kliknięcie odznacza
     pokaz(); draw(aktywny);
   });
