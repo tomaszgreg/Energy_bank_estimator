@@ -17,7 +17,7 @@
 
   SPDX-License-Identifier: GPL-2.0-only
 
-  Wersja 31 (2026-08-22)
+  Wersja 34 (2026-08-22)
 -->
 <html lang="pl">
 <head>
@@ -233,6 +233,27 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
   </div>
 </details>
 
+<details id="dystPanel">
+  <summary>Taryfa dystrybucyjna</summary>
+  <div class="body">
+    <p class="note" style="margin-top:10px">Taryfę dystrybucyjną wybierasz u operatora,
+      a cenę energii u sprzedawcy — to dwie niezależne umowy, więc każdą cenę można
+      połączyć z każdą dystrybucją. Strefowa G12 daje <b>0,40 zł/kWh</b> różnicy między
+      strefą drogą a tanią; to zwykle większy zysk niż arbitraż na samej cenie energii
+      i to głównie z niego bierze się opłacalność magazynu.</p>
+    <div class="check"><input type="checkbox" id="dystG11rows">
+      <span>dystrybucja G12 dla wierszy z ceną <b>G11</b></span></div>
+    <div class="check"><input type="checkbox" id="dystG12rows" checked>
+      <span>dystrybucja G12 dla wierszy z ceną <b>G12</b></span></div>
+    <div class="check"><input type="checkbox" id="dynG12" checked>
+      <span>dystrybucja G12 dla wierszy z ceną <b>RCE dynamiczną</b></span></div>
+    <p class="note">Wiersze, w których dystrybucja odbiega od tej domyślnie kojarzonej
+      z ceną, dostają w tabeli znacznik „+dG12” lub „+dG11”. Przełączniki zmieniają też
+      opłatę sieciową stałą oraz sposób planowania pracy magazynu, bo cena godziny
+      zawiera składnik dystrybucyjny.</p>
+  </div>
+</details>
+
 <details id="cfg">
   <summary>Stawki i parametry</summary>
   <div class="body">
@@ -250,16 +271,6 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
       <div><label>G12 strefa tania</label><input id="sG12n" value="0.0765"></div>
       <div><label>jakościowa + OZE + kogen.</label><input id="addv" value="0.0435"></div>
     </div>
-
-    <div class="sub-h">Taryfa dystrybucyjna</div>
-    <p class="note" style="margin-top:8px">Taryfę dystrybucyjną wybiera się u operatora
-      niezależnie od sprzedawcy energii, więc każdą cenę energii można połączyć z każdą
-      dystrybucją. Strefowa G12 daje 0,40 zł/kWh różnicy między strefami — to zwykle
-      większy zysk niż arbitraż na samej cenie energii.</p>
-    <div class="check"><input type="checkbox" id="dystG11rows">
-      <span>dystrybucja G12 dla wierszy z ceną G11</span></div>
-    <div class="check"><input type="checkbox" id="dystG12rows" checked>
-      <span>dystrybucja G12 dla wierszy z ceną G12</span></div>
 
     <div class="sub-h">Opłaty stałe (zł/mies. netto)</div>
     <div class="grid">
@@ -288,8 +299,9 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
       <span>oddawaj energię z magazynu w drogich godzinach</span></div>
     <div class="check"><input type="checkbox" id="rollPlan" checked>
       <span>planowanie kroczące — przeliczaj o godzinie publikacji cen, znając stan magazynu</span></div>
-    <div class="check"><input type="checkbox" id="selfFirst">
-      <span>priorytet samowystarczalności — nie dokupuj nocą, żeby sprzedać wieczorem</span></div>
+    <div class="check"><input type="checkbox" id="selfFirst" checked>
+      <span>priorytet samowystarczalności — zużywaj własne PV w tanich godzinach,
+      zamiast trzymać je na wieczorną sprzedaż</span></div>
     <div class="check"><input type="checkbox" id="autoThr" checked>
       <span>próg automatyczny — sprzedawaj tylko wtedy, gdy to bije autokonsumpcję</span></div>
     <div class="grid">
@@ -322,11 +334,17 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
       Nie ma warunku „pusty na koniec” — co zostanie, przechodzi do kolejnego przeliczenia.
       Po wyłączeniu wraca prostszy plan dobowy, który liczy każdą dobę osobno i zakłada
       pusty magazyn na jej starcie.</p>
-    <p class="note">W tanich godzinach magazyn zasila dom własną energią ze słońca, o ile uniknięty
-      koszt zakupu bije najlepszą nadchodzącą cenę eksportu. Gdy eksport płaci lepiej, opłaca się
-      dokupić prąd nocą i sprzedać własny wieczorem — ale to działa tylko dopóki depozyt da się
-      wykorzystać. Jeśli budujesz go więcej, niż wynosi roczna wartość energii czynnej na rachunku,
-      nadwyżka przepada ze zwrotem 30% i wtedy lepiej włączyć priorytet samowystarczalności.</p>
+    <p class="note">Przełącznik dotyczy wyłącznie energii z PV i decyduje, na co ją zużyć.
+      Magazyn ma w tanich godzinach wybór: oddać zmagazynowane słońce do domu i nie płacić za
+      pobór, albo zostawić je na sprzedaż w wieczornym szczycie, a dom zasilić tanim prądem
+      z sieci. To dwa niezależne strumienie — energia kupiona z sieci nigdy nie trafia na
+      sprzedaż, bo prosument może odsprzedawać tylko własną produkcję i magazyn prowadzi na to
+      osobne saldo.</p>
+    <p class="note">Domyślnie wybór jest liczony co godzinę: sprzedajemy, gdy najlepsza
+      nadchodząca cena eksportu przewyższa uniknięty koszt zakupu. Po włączeniu priorytetu
+      samowystarczalności PV zawsze idzie najpierw do domu. Warto to zrobić, gdy budujesz
+      więcej depozytu, niż wynosi roczna wartość energii czynnej na rachunku — nadwyżka i tak
+      przepadnie ze zwrotem 30%, więc oszczędność na rachunku jest pewniejsza od depozytu.</p>
 
     <div class="sub-h">Taryfa dynamiczna</div>
     <div class="check"><input type="checkbox" id="dynOn" checked>
@@ -335,8 +353,6 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
       <div><label>marża sprzedawcy zł/kWh</label><input id="dynMargin" value="0.05"></div>
       <div><label>opłata handlowa zł/mies.</label><input id="dynFee" value="10"></div>
     </div>
-    <div class="check"><input type="checkbox" id="dynG12" checked>
-      <span>dystrybucja G12 zamiast G11 — strefowa także przy cenach RCE</span></div>
     <p class="note">Energia czynna wyceniana jest godzina po godzinie po tej samej cenie RCE,
       po której rozliczane są nadwyżki, powiększonej o marżę sprzedawcy. Dystrybucja liczona
       jak w G11, bo taryfa dynamiczna nie ma stref — sygnał cenowy niesie sama cena energii.
@@ -523,7 +539,7 @@ async function readXlsx(buf){
 }
 
 /* ============ wersja ============ */
-const APP_VERSION='31';
+const APP_VERSION='34';
 const APP_DATE='2026-08-22';
 document.addEventListener('DOMContentLoaded',()=>{
   const el=document.getElementById('wersja');
