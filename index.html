@@ -17,7 +17,7 @@
 
   SPDX-License-Identifier: GPL-2.0-only
 
-  Wersja 35 (2026-08-22)
+  Wersja 36 (2026-08-22)
 -->
 <html lang="pl">
 <head>
@@ -149,6 +149,16 @@ button.alt:hover{border-color:var(--night)}
 .pb-big2.never{color:var(--bad);font-size:16px}
 .pb-never{font-family:var(--display)}
 .pb-unit{font-size:11px;color:var(--ink-dim)}
+.szczegol{background:var(--panel-2);border:1px solid var(--night);border-radius:5px;
+  padding:11px 12px;margin-top:10px;font-size:12px;line-height:1.55}
+.szczegol h5{font-family:var(--display);text-transform:uppercase;letter-spacing:.05em;
+  font-size:14px;margin:0 0 5px;color:var(--ink)}
+.szczegol .sekcja{margin-top:9px;padding-top:8px;border-top:1px solid var(--line)}
+.szczegol .w{display:flex;justify-content:space-between;gap:10px;color:var(--ink-dim)}
+.szczegol .w b{color:var(--ink);font-weight:500;white-space:nowrap}
+.szczegol .zamknij{float:right;background:none;border:0;color:var(--ink-dim);
+  font-size:18px;line-height:1;cursor:pointer;padding:0 2px}
+canvas{cursor:crosshair}
 .vbadge{display:inline-block;background:var(--panel-2);border:1px solid var(--line);
   border-radius:3px;padding:1px 7px;margin-right:8px;font-size:11px;color:var(--night);
   letter-spacing:.04em;vertical-align:1px}
@@ -539,7 +549,7 @@ async function readXlsx(buf){
 }
 
 /* ============ wersja ============ */
-const APP_VERSION='35';
+const APP_VERSION='36';
 const APP_DATE='2026-08-22';
 document.addEventListener('DOMContentLoaded',()=>{
   const el=document.getElementById('wersja');
@@ -1339,7 +1349,7 @@ function onePass(variants,opt0,cfg,startDep,startBat){
     }
     const sp=cfg.shiftOn?shiftParams(m.key):{per:0,loss:0};
     const sh=shiftSeries(m,sp.per,sp.loss);
-    const rows=[],grids={};
+    const rows=[],grids={},plany={};
     variants.forEach(v=>{
       const series=v.shift?sh.series:m.series;
       let vo=opt;
@@ -1375,8 +1385,9 @@ function onePass(variants,opt0,cfg,startDep,startBat){
                  imp:s.imp,impNight:s.impNight,
                  expPv:s.expPv,expBat:s.expBat,dep:d.dep,pay,used,refund,s});
       grids[v.id]=s.grid;
+      plany[v.id]={cheap:vo.cheapArr||null,dis:vo.disArr||null};
     });
-    months.push({m,rows,grids,prices,sh});
+    months.push({m,rows,grids,plany,prices,sh});
   });
   return {dep,bat,totals,months};
 }
@@ -1449,7 +1460,7 @@ function run(){
 
   const out=document.getElementById('out'); out.innerHTML='';
   res.months.forEach(x=>out.appendChild(
-    monthCard(x.m,x.rows,x.grids,variants,x.prices,monthCoverage(x.m),x.sh)));
+    monthCard(x.m,x.rows,x.grids,variants,x.prices,monthCoverage(x.m),x.sh,x.plany)));
 
   document.getElementById('totalWrap').hidden=!MONTHS.length;
   const items=variants.map(v=>{const t=res.totals[v.id];
@@ -1788,7 +1799,7 @@ function drawRce(){
 }
 
 /* ============ karta miesiąca ============ */
-function monthCard(m,rows,grids,variants,prices,cov,sh){
+function monthCard(m,rows,grids,variants,prices,cov,sh,plany){
   const el=document.createElement('div'); el.className='card';
   let pmin=Infinity,pmax=-Infinity,psum=0;
   // dobowy rozstęp cen — to on decyduje, czy magazyn ma co arbitrażować
@@ -1845,6 +1856,7 @@ function monthCard(m,rows,grids,variants,prices,cov,sh){
       <button class="tab" data-t="zl"  aria-pressed="false">zł</button>
     </div>
     <canvas></canvas>
+    <div data-rola="szczegol"></div>
     <div class="legend" data-rola="legenda"></div>`;
 
   // Druga warstwa mapy: zamiast kilowatogodzin — złotówki zapłacone w tej godzinie.
@@ -1918,6 +1930,54 @@ function monthCard(m,rows,grids,variants,prices,cov,sh){
     el.querySelectorAll('[data-rola="tryb"] .tab')
       .forEach(x=>x.setAttribute('aria-pressed','false'));
     b.setAttribute('aria-pressed','true'); tryb=b.dataset.t; opis(); draw(aktywny);});
+  // Kliknięcie w komórkę: szczegóły tej godziny i podsumowanie całej doby.
+  const box=el.querySelector('[data-rola="szczegol"]');
+  const zl3=x=>fmt(x,3)+' zł';
+  cv.addEventListener('click',ev=>{
+    const r=cv.getBoundingClientRect();
+    const hh=Math.floor((ev.clientX-r.left)/r.width*24);
+    const dd=Math.floor((ev.clientY-r.top)/r.height*m.nDays);
+    if(hh<0||hh>23||dd<0||dd>=m.nDays) return;
+    const v=variants.find(x=>x.id===aktywny)||variants[0];
+    const i=dd*24+hh, g=grids[aktywny][i], k=koszty[aktywny][i];
+    const noc=isNight(m.month,hh);
+    const pl=plany[aktywny]||{};
+    let stan;
+    if(pl.dis&&pl.cheap) stan=pl.cheap[i]?'ładowanie z sieci':pl.dis[i]?'rozładowanie do domu':'bezczynna';
+    else stan=noc?'strefa tania':'strefa droga';
+    const cenaKwh=g>0?k/g:null;
+    // podsumowanie doby
+    let pob=0,odd=0,koszt=0,zer=0,lo=Infinity,hi=-Infinity,sum=0;
+    for(let q=0;q<24;q++){
+      const j=dd*24+q, x=grids[aktywny][j];
+      if(x>0) pob+=x; else if(x<0) odd-=x;
+      if(Math.abs(x)<0.01) zer++;
+      koszt+=koszty[aktywny][j];
+      const c=prices[j]; if(c<lo)lo=c; if(c>hi)hi=c; sum+=c;
+    }
+    const kosztTaniej=lo/1000+(v.dystG12?P('sG12n'):P('sG11'))+P('addv')+(v.dyn?P('dynMargin'):0);
+    const prog=(kosztTaniej/(P('eff')/100)-kosztTaniej)*1000;
+    box.innerHTML='<div class="szczegol">'+
+      '<button class="zamknij" title="zamknij">×</button>'+
+      '<h5>'+m.dates[dd]+' · '+String(hh).padStart(2,'0')+':00 — '+v.name+'</h5>'+
+      '<div class="w"><span>'+(g>=0?'pobór z sieci':'oddane do sieci')+'</span><b>'+
+        fmt(Math.abs(g),2)+' kWh</b></div>'+
+      (cenaKwh!==null?'<div class="w"><span>cena zakupu</span><b>'+zl3(cenaKwh)+'/kWh</b></div>':'')+
+      '<div class="w"><span>'+(k>=0?'koszt godziny':'depozyt za godzinę')+'</span><b>'+
+        zl(Math.abs(k))+'</b></div>'+
+      '<div class="w"><span>RCE</span><b>'+fmt(prices[i],0)+' zł/MWh</b></div>'+
+      '<div class="w"><span>tryb magazynu</span><b>'+stan+'</b></div>'+
+      '<div class="sekcja"><div class="w"><span><b>cała doba</b></span><span>'+
+        m.dates[dd]+'</span></div>'+
+      '<div class="w"><span>pobór / oddane</span><b>'+fmt(pob,1)+' / '+fmt(odd,1)+' kWh</b></div>'+
+      '<div class="w"><span>koszt doby</span><b>'+zl(koszt)+'</b></div>'+
+      '<div class="w"><span>godzin bez poboru</span><b>'+zer+' z 24</b></div>'+
+      '<div class="w"><span>RCE min / śr. / maks</span><b>'+fmt(lo,0)+' / '+fmt(sum/24,0)+
+        ' / '+fmt(hi,0)+'</b></div>'+
+      '<div class="w"><span>rozstęp a próg</span><b>'+fmt(hi-lo,0)+' vs '+fmt(prog,0)+
+        ' zł/MWh'+(hi-lo<prog?' — za mało':'')+'</b></div></div></div>';
+    box.querySelector('.zamknij').onclick=()=>{box.innerHTML=''};
+  });
   opis(); draw(aktywny);
   return el;
 }
