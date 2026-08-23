@@ -17,7 +17,7 @@
 
   SPDX-License-Identifier: GPL-2.0-only
 
-  Wersja 27 (2026-08-22)
+  Wersja 31 (2026-08-22)
 -->
 <html lang="pl">
 <head>
@@ -199,7 +199,8 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
     z pola poniżej, co daje wynik jak przy rozliczeniu miesięcznym.</div>
   <button class="alt" id="fetchRce">Pobierz z PSE</button>
   <button class="alt" id="pickRce">Wgraj plik RCE</button>
-  <button class="alt" id="saveRce">Zapisz ceny do pliku</button>
+  <button class="alt" id="saveRce">Ściągnij ceny (JSON)</button>
+  <button class="alt" id="saveCsv">Ściągnij ceny (CSV)</button>
   <input type="file" id="rceFiles" multiple accept=".csv,.xls,.xlsx,.txt,.json">
   <div class="check" style="margin-top:10px"><input type="checkbox" id="rceCache" checked>
     <span id="rceCacheLbl">zapamiętuj pobrane ceny w tej przeglądarce</span></div>
@@ -249,6 +250,16 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
       <div><label>G12 strefa tania</label><input id="sG12n" value="0.0765"></div>
       <div><label>jakościowa + OZE + kogen.</label><input id="addv" value="0.0435"></div>
     </div>
+
+    <div class="sub-h">Taryfa dystrybucyjna</div>
+    <p class="note" style="margin-top:8px">Taryfę dystrybucyjną wybiera się u operatora
+      niezależnie od sprzedawcy energii, więc każdą cenę energii można połączyć z każdą
+      dystrybucją. Strefowa G12 daje 0,40 zł/kWh różnicy między strefami — to zwykle
+      większy zysk niż arbitraż na samej cenie energii.</p>
+    <div class="check"><input type="checkbox" id="dystG11rows">
+      <span>dystrybucja G12 dla wierszy z ceną G11</span></div>
+    <div class="check"><input type="checkbox" id="dystG12rows" checked>
+      <span>dystrybucja G12 dla wierszy z ceną G12</span></div>
 
     <div class="sub-h">Opłaty stałe (zł/mies. netto)</div>
     <div class="grid">
@@ -324,6 +335,8 @@ footer.lic .spdx{font-size:10px;opacity:.65;letter-spacing:.03em;margin-top:10px
       <div><label>marża sprzedawcy zł/kWh</label><input id="dynMargin" value="0.05"></div>
       <div><label>opłata handlowa zł/mies.</label><input id="dynFee" value="10"></div>
     </div>
+    <div class="check"><input type="checkbox" id="dynG12" checked>
+      <span>dystrybucja G12 zamiast G11 — strefowa także przy cenach RCE</span></div>
     <p class="note">Energia czynna wyceniana jest godzina po godzinie po tej samej cenie RCE,
       po której rozliczane są nadwyżki, powiększonej o marżę sprzedawcy. Dystrybucja liczona
       jak w G11, bo taryfa dynamiczna nie ma stref — sygnał cenowy niesie sama cena energii.
@@ -510,7 +523,7 @@ async function readXlsx(buf){
 }
 
 /* ============ wersja ============ */
-const APP_VERSION='27';
+const APP_VERSION='31';
 const APP_DATE='2026-08-22';
 document.addEventListener('DOMContentLoaded',()=>{
   const el=document.getElementById('wersja');
@@ -715,7 +728,7 @@ function planPriceZones(prices,series,cap,pow,effOne,vat,fixedPart){
   const n=prices.length;
   const cheap=new Uint8Array(n), dis=new Uint8Array(n);
   if(cap<=0) return {cheap,dis};
-  const cost=i=>(prices[i]/1000+fixedPart)*vat;
+  const cost=i=>(prices[i]/1000+(typeof fixedPart==='function'?fixedPart(i):fixedPart))*vat;
   // Okno planowania to doba kalendarzowa. PSE publikuje ceny na dobę następną
   // około 17:00, więc dłuższy horyzont byłby wykonalny — ale przetestowany
   // wariant z oknem 31–72 h i ładowaniem z zapasem na jutro wypadał gorzej,
@@ -1085,21 +1098,29 @@ function resultTable(items,footer){
 }
 
 /* ============ koszty ============ */
-function cost(sim,isG12,v,prices,cfg){
+function cost(sim,isG12,v,prices,cfg,month){
   if(v&&v.dyn){                                   // energia po cenie godzinowej RCE + marża
-    let energy=0;
-    for(let i=0;i<sim.grid.length;i++)
-      if(sim.grid[i]>0) energy+=sim.grid[i]*(prices[i]/1000+cfg.dynMargin);
-    return {energy, dist:sim.imp*P('sG11'), extras:sim.imp*P('addv'),
-            fixed:P('fsG11')+P('fAb')+P('fMoc')+cfg.dynFee};
+    let energy=0,dist=0;
+    for(let i=0;i<sim.grid.length;i++){
+      if(sim.grid[i]<=0) continue;
+      energy+=sim.grid[i]*(prices[i]/1000+cfg.dynMargin);
+      dist+=sim.grid[i]*(cfg.dynG12
+        ? (isNight(month,i%24)?P('sG12n'):P('sG12d'))
+        : P('sG11'));
+    }
+    return {energy, dist, extras:sim.imp*P('addv'),
+            fixed:(cfg.dynG12?P('fsG12'):P('fsG11'))+P('fAb')+P('fMoc')+cfg.dynFee};
   }
-  return costZone(sim,isG12);
+  return costZone(sim,isG12,v?v.dystG12:isG12);
 }
-function costZone(sim,isG12){
+// Cena energii i taryfa dystrybucyjna są niezależne: pierwsza pochodzi od
+// sprzedawcy, druga od operatora. Stąd osobne przełączniki dla obu.
+function costZone(sim,isG12,dystG12){
   const add=P('addv');
   const energy=isG12?sim.impDay*P('eG12d')+sim.impNight*P('eG12n'):sim.imp*P('eG11');
-  const dist  =isG12?sim.impDay*P('sG12d')+sim.impNight*P('sG12n'):sim.imp*P('sG11');
-  return {energy,dist,extras:sim.imp*add,fixed:(isG12?P('fsG12'):P('fsG11'))+P('fAb')+P('fMoc')};
+  const dist  =dystG12?sim.impDay*P('sG12d')+sim.impNight*P('sG12n'):sim.imp*P('sG11');
+  return {energy,dist,extras:sim.imp*add,
+          fixed:(dystG12?P('fsG12'):P('fsG11'))+P('fAb')+P('fMoc')};
 }
 
 /* ============ wczytywanie ============ */
@@ -1221,6 +1242,25 @@ document.getElementById('saveRce').onclick=()=>{
   a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),5000);
   rceErr.textContent='Zapisano ceny dla '+days+' dni. Plik wgrasz z powrotem przyciskiem „Wgraj plik RCE”.';
 };
+document.getElementById('saveCsv').onclick=()=>{
+  const dni=Object.keys(RCE).sort();
+  if(!dni.length){rceErr.textContent='Nie ma jeszcze żadnych cen do zapisania.';return}
+  const linie=['data;godzina;RCE [zl/MWh]'];
+  let n=0;
+  for(const d of dni) for(let h=0;h<24;h++){
+    const v=rceHour(d,h);
+    if(v===null) continue;
+    linie.push(d+';'+String(h).padStart(2,'0')+':00;'+v.toFixed(2).replace('.',','));
+    n++;
+  }
+  const blob=new Blob(['\uFEFF'+linie.join('\r\n')],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='ceny-rce-'+dni[0]+'_'+dni[dni.length-1]+'.csv';
+  a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  rceErr.textContent='Zapisano '+n+' godzin do pliku CSV. Wgrywa się z powrotem tym samym '+
+    'przyciskiem co pliki z PSE.';
+};
 document.getElementById('clearRce').onclick=()=>{
   Object.keys(RCE).forEach(k=>delete RCE[k]);
   rceSource={};
@@ -1265,14 +1305,19 @@ function onePass(variants,opt0,cfg,startDep,startBat){
     // na tanie i drogie godziny wg mediany ceny z danego dnia.
     const dynRetail=new Float64Array(prices.length);
     const dynCheap=new Uint8Array(prices.length);
-    const fixedPart=P('sG11')+P('addv')+cfg.dynMargin;
+    // Zmienny składnik dystrybucji: przy G12 zależy od strefy, przy G11 jest stały.
+    const dystH=cfg.dynG12
+      ? (i)=>(isNight(m.month,i%24)?P('sG12n'):P('sG12d'))
+      : ()=>P('sG11');
+    const fixedPartAt=(i)=>dystH(i)+P('addv')+cfg.dynMargin;
+    const fixedPart=fixedPartAt(0);
     for(let d=0;d*24<prices.length;d++){
       const day=[];
       for(let h=0;h<24&&d*24+h<prices.length;h++) day.push(prices[d*24+h]);
       const med=[...day].sort((a,b)=>a-b)[Math.floor(day.length/2)];
       for(let h=0;h<day.length;h++){
         const i=d*24+h;
-        dynRetail[i]=(prices[i]/1000+fixedPart)*cfg.vat;
+        dynRetail[i]=(prices[i]/1000+fixedPartAt(i))*cfg.vat;
         dynCheap[i]=prices[i]<=med?1:0;
       }
     }
@@ -1288,18 +1333,18 @@ function onePass(variants,opt0,cfg,startDep,startBat){
           if(cfg.rollPlan){
             vo.cheapArr=new Uint8Array(prices.length);
             vo.disArr=new Uint8Array(prices.length);
-            vo.roll={cost:i=>(prices[i]/1000+fixedPart)*cfg.vat,
+            vo.roll={cost:i=>(prices[i]/1000+fixedPartAt(i))*cfg.vat,
                      publish:opt.publish, horyzont:24+(24-opt.publish), commitAll:true};
           }else{
             const pl=planPriceZones(prices,v.shift?sh.series:m.series,v.cap,v.pow,
-                                    cfg.effOne,cfg.vat,fixedPart);
+                                    cfg.effOne,cfg.vat,fixedPartAt);
             vo.cheapArr=pl.cheap; vo.disArr=pl.dis;
           }
         }
       }
       const s=simulate(m.month,series,v.cap,v.pow,cfg.effOne,vo,bat[v.id]);
       bat[v.id]={pv:s.pv,gr:s.gr};
-      const c=cost(s,v.g12,v,prices,cfg);
+      const c=cost(s,v.g12,v,prices,cfg,m.month);
       const refund=depAge(dep[v.id],cfg.refundPct);                       // przeterminowane koszyki
       const eBill=cfg.depGross?c.energy*cfg.vat:c.energy;   // co depozyt może pomniejszyć
       const used=depUse(dep[v.id],eBill);
@@ -1329,6 +1374,9 @@ function run(){
     shiftOn:document.getElementById('shiftOn').checked,
     refundPct:Math.max(0,Math.min(1,P('refundPct')/100)),
     rollPlan:document.getElementById('rollPlan').checked,
+    dynG12:document.getElementById('dynG12').checked,
+    dystG11rows:document.getElementById('dystG11rows').checked,
+    dystG12rows:document.getElementById('dystG12rows').checked,
     dynMargin:P('dynMargin'), dynFee:P('dynFee')};
   document.getElementById('shiftGrid').style.opacity=cfg.shiftOn?'1':'.4';
   document.getElementById('shiftG11').disabled=!cfg.shiftOn;
@@ -1346,11 +1394,13 @@ function run(){
   // tabeli stały obok siebie te same konfiguracje bez i z nocnym doładowaniem.
   const anyShift=cfg.shiftOn&&MONTHS.some(m=>{
     const p=shiftParams(m.key); return p.per>0||p.loss>0;});
+  const d11=cfg.dystG11rows, d12=cfg.dystG12rows;
+  const s11=d11?' +dG12':'', s12=d12?'':' +dG11';   // znacznik odstępstwa od domyślnej dystrybucji
   const variants=[
-    {id:'g11',name:'G11',                      g12:false,cap:0,   pow:0,   shift:false},
-    {id:'g12',name:'G12',                      g12:true, cap:0,   pow:0,   shift:false},
-    {id:'a',  name:`G12 +${fmt(capA,0)} kWh`,  g12:true, cap:capA,pow:powA,shift:false,price:prA},
-    {id:'b',  name:`G12 +${fmt(capB,0)} kWh`,  g12:true, cap:capB,pow:powB,shift:false,price:prB}];
+    {id:'g11',name:'G11'+s11,                     g12:false,cap:0,   pow:0,   shift:false,dystG12:d11},
+    {id:'g12',name:'G12'+s12,                     g12:true, cap:0,   pow:0,   shift:false,dystG12:d12},
+    {id:'a',  name:`G12 +${fmt(capA,0)} kWh`+s12, g12:true, cap:capA,pow:powA,shift:false,dystG12:d12,price:prA},
+    {id:'b',  name:`G12 +${fmt(capB,0)} kWh`+s12, g12:true, cap:capB,pow:powB,shift:false,dystG12:d12,price:prB}];
   if(document.getElementById('dynOn').checked){
     variants.push(
       {id:'d0',name:'RCE dynamiczna',            g12:false,cap:0,   pow:0,   shift:false,dyn:true},
@@ -1359,11 +1409,11 @@ function run(){
   }
   if(anyShift){
     if(cfg.shiftG11)
-      variants.push({id:'g11s',name:'G11 + noc',g12:false,cap:0,pow:0,shift:true});
+      variants.push({id:'g11s',name:'G11 + noc'+s11,g12:false,cap:0,pow:0,shift:true,dystG12:d11});
     variants.push(
-      {id:'g12s',name:'G12 + noc',                        g12:true,cap:0,   pow:0,   shift:true},
-      {id:'as',  name:`G12 +${fmt(capA,0)} kWh + noc`, g12:true,cap:capA,pow:powA,shift:true,price:prA},
-      {id:'bs',  name:`G12 +${fmt(capB,0)} kWh + noc`, g12:true,cap:capB,pow:powB,shift:true,price:prB});
+      {id:'g12s',name:'G12 + noc'+s12,                        g12:true,cap:0,   pow:0,   shift:true,dystG12:d12},
+      {id:'as',  name:`G12 +${fmt(capA,0)} kWh + noc`+s12, g12:true,cap:capA,pow:powA,shift:true,dystG12:d12,price:prA},
+      {id:'bs',  name:`G12 +${fmt(capB,0)} kWh + noc`+s12, g12:true,cap:capB,pow:powB,shift:true,dystG12:d12,price:prB});
   }
 
   // Zapętlenie roku: powtarzamy przebieg, podając na wejście stan z końca
@@ -1571,9 +1621,10 @@ function sweepData(opt0,cfg,capA,powA,prA,capB,powB,prB,loop){
   const priceAt=c=>(capB!==capA)
       ? prA+(c-capA)*(prB-prA)/(capB-capA)
       : prA/Math.max(capA,1)*c;
-  const vars=[{id:'base',name:'G12',g12:true,cap:0,pow:0,shift:false}];
+  const dz=cfg.dystG12rows;
+  const vars=[{id:'base',name:'G12',g12:true,cap:0,pow:0,shift:false,dystG12:dz}];
   for(let c=minCap;c<=maxCap+1e-9;c++)
-    vars.push({id:'c'+c,name:'G12 +'+c,g12:true,cap:c,
+    vars.push({id:'c'+c,name:'G12 +'+c,g12:true,cap:c,dystG12:dz,
                pow:Math.min(powCap,c*crate),shift:false,price:priceAt(c)});
   let res=onePass(vars,opt0,cfg,{},{});
   for(let k=1;k<(loop?3:1);k++) res=onePass(vars,opt0,cfg,res.dep,res.bat);
@@ -1725,15 +1776,23 @@ function monthCard(m,rows,grids,variants,prices,cov,sh){
   const el=document.createElement('div'); el.className='card';
   let pmin=Infinity,pmax=-Infinity,psum=0;
   // dobowy rozstęp cen — to on decyduje, czy magazyn ma co arbitrażować
-  let rozSum=0,rozMin=Infinity,rozMax=0,dni=0;
+  let rozSum=0,rozMin=Infinity,rozMax=0,dni=0,ponizej=0,progSum=0;
+  // Próg: dystrybucję płaci się też od energii wpuszczanej do magazynu, więc
+  // straty cyklu liczą się od pełnej ceny. Stąd wymagana różnica rośnie razem
+  // z poziomem cen i przy drogiej dobie oscylacja musi być większa.
+  const dyst=P('sG11')+P('addv')+P('dynMargin');
+  const spr=P('eff')/100;
   for(let d=0;d*24<prices.length;d++){
     let lo=Infinity,hi=-Infinity;
     for(let h=0;h<24&&d*24+h<prices.length;h++){
       const v=prices[d*24+h]; if(v<lo)lo=v; if(v>hi)hi=v;
     }
     const r=hi-lo; rozSum+=r; if(r<rozMin)rozMin=r; if(r>rozMax)rozMax=r; dni++;
+    const kosztTaniej=lo/1000+dyst;
+    const prog=(kosztTaniej/spr-kosztTaniej)*1000;
+    progSum+=prog; if(r<prog) ponizej++;
   }
-  const rozSr=dni?rozSum/dni:0;
+  const rozSr=dni?rozSum/dni:0, progSr=dni?progSum/dni:0;
   for(const p of prices){pmin=Math.min(pmin,p);pmax=Math.max(pmax,p);psum+=p;}
   const srcTxt=cov>0.99?('RCE godzinowe · '+(rceSource[m.key]||'plik'))
               :cov>0?`RCE godzinowe dla ${fmt(cov*100,0)}% godzin, reszta cena zastępcza`
@@ -1746,8 +1805,9 @@ function monthCard(m,rows,grids,variants,prices,cov,sh){
         oddane ${fmt(m.pvGiven,1)} kWh<br>po zbilansowaniu: pobór ${fmt(rows[0].s.imp,1)} kWh,
         nadwyżka ${fmt(rows[0].s.exp,1)} kWh<br>${srcTxt} · RCE
         ${fmt(pmin,0)}–${fmt(pmax,0)}, śr. ${fmt(psum/prices.length,0)} zł/MWh<br>rozstęp
-        dobowy: śr. ${fmt(rozSr,0)}, od ${fmt(rozMin,0)} do ${fmt(rozMax,0)} zł/MWh${
-        rozSr<150?' — za mało na arbitraż w taryfie dynamicznej':''}${
+        dobowy: śr. ${fmt(rozSr,0)}, od ${fmt(rozMin,0)} do ${fmt(rozMax,0)} zł/MWh<br>próg
+        opłacalności ${fmt(progSr,0)} zł/MWh${ponizej?`, poniżej niego ${ponizej} z ${dni} dni`
+        :', wszystkie dni powyżej'}${
         sh&&sh.moved>0.05?`<br>przesunięte na noc: ${fmt(sh.moved,0)} kWh
         (${fmt(sh.moved/m.nDays,1)} kWh/dobę), dołożone w strefie taniej:
         ${fmt(sh.added,0)} kWh`:''}</div>
