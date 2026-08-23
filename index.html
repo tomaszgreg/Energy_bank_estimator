@@ -17,7 +17,7 @@
 
   SPDX-License-Identifier: GPL-2.0-only
 
-  Wersja 39 (2026-08-22)
+  Wersja 40 (2026-08-22)
 -->
 <html lang="pl">
 <head>
@@ -38,7 +38,7 @@
 html,body{margin:0;padding:0}
 body{background:var(--bg);color:var(--ink);font-family:var(--mono);font-size:14px;
      line-height:1.5;-webkit-text-size-adjust:100%;padding:0 0 64px}
-.wrap{max-width:880px;margin:0 auto;padding:0 14px}
+.wrap{max-width:1120px;margin:0 auto;padding:0 14px}
 
 header{padding:26px 0 18px;border-bottom:1px solid var(--line);margin-bottom:20px}
 h1{font-family:var(--display);font-weight:700;font-size:34px;line-height:.98;
@@ -95,6 +95,7 @@ input:focus{outline:2px solid var(--night);outline-offset:-1px}
 .meta{font-size:11px;color:var(--ink-dim);text-align:right}
 
 .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:12px -14px 0;padding:0 14px}
+@media (min-width:1000px){.scroll{margin:12px 0 0;padding:0}}
 table{border-collapse:collapse;width:100%;font-size:12.5px;min-width:940px;table-layout:fixed}
 th,td{padding:7px 8px;text-align:right;border-bottom:1px solid var(--line);
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -115,7 +116,8 @@ tfoot td{border-bottom:none;padding-top:10px;color:var(--ink-dim);font-size:11.5
 .tab{background:var(--panel-2);border:1px solid var(--line);border-radius:3px;color:var(--ink-dim);
      font-family:var(--mono);font-size:11px;padding:5px 9px;cursor:pointer}
 .tab[aria-pressed="true"]{background:var(--night);border-color:var(--night);color:#06131c;font-weight:600}
-canvas{width:100%;height:auto;display:block;image-rendering:pixelated;border:1px solid var(--line);border-radius:3px}
+canvas{width:100%;max-width:620px;height:auto;display:block;image-rendering:pixelated;
+  border:1px solid var(--line);border-radius:3px}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:10.5px;color:var(--ink-dim);margin-top:6px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
 
@@ -549,7 +551,7 @@ async function readXlsx(buf){
 }
 
 /* ============ wersja ============ */
-const APP_VERSION='39';
+const APP_VERSION='40';
 const APP_DATE='2026-08-22';
 document.addEventListener('DOMContentLoaded',()=>{
   const el=document.getElementById('wersja');
@@ -1516,7 +1518,7 @@ function payChart(months,variants,width){
   // Rysujemy w jednostkach równych pikselom kontenera, żeby wykres mieścił się
   // w oknie bez przewijania, a napisy zachowały czytelny rozmiar niezależnie
   // od szerokości ekranu. Po obróceniu telefonu przerysowuje się szerszy.
-  const W=Math.max(300,Math.min(width||760,900));
+  const W=Math.max(300,Math.min(width||760,1080));
   const H=Math.round(Math.max(230,Math.min(W*0.62,340)));
   const L=46,R=10,T=18,B=30;
   const iw=W-L-R, ih=H-T-B, n=months.length;
@@ -1679,7 +1681,7 @@ function sweepData(opt0,cfg,capA,powA,prA,capB,powB,prB,loop){
 
 function sweepChart(rows,width,capA,capB){
   if(!rows||!rows.length) return '';
-  const W=Math.max(300,Math.min(width||760,900));
+  const W=Math.max(300,Math.min(width||760,1080));
   const H=Math.round(Math.max(240,Math.min(W*0.60,340)));
   const L=44,R=54,T=18,B=32;
   const iw=W-L-R, ih=H-T-B;
@@ -1746,7 +1748,7 @@ function sweepChart(rows,width,capA,capB){
 function rceChart(prices,nDays,width){
   const n=prices.length;
   if(!n) return '';
-  const W=Math.max(300,Math.min(width||760,900));
+  const W=Math.max(300,Math.min(width||760,1080));
   const H=Math.round(Math.max(200,Math.min(W*0.46,300)));
   const L=48,R=10,T=18,B=28;
   const iw=W-L-R, ih=H-T-B;
