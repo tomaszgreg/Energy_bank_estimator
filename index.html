@@ -17,7 +17,7 @@
 
   SPDX-License-Identifier: GPL-2.0-only
 
-  Wersja 36 (2026-08-22)
+  Wersja 38 (2026-08-22)
 -->
 <html lang="pl">
 <head>
@@ -95,7 +95,7 @@ input:focus{outline:2px solid var(--night);outline-offset:-1px}
 .meta{font-size:11px;color:var(--ink-dim);text-align:right}
 
 .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:12px -14px 0;padding:0 14px}
-table{border-collapse:collapse;width:100%;font-size:12.5px;min-width:915px;table-layout:fixed}
+table{border-collapse:collapse;width:100%;font-size:12.5px;min-width:940px;table-layout:fixed}
 th,td{padding:7px 8px;text-align:right;border-bottom:1px solid var(--line);
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* pierwsza kolumna przyklejona, żeby nazwa wariantu została widoczna
@@ -549,7 +549,7 @@ async function readXlsx(buf){
 }
 
 /* ============ wersja ============ */
-const APP_VERSION='36';
+const APP_VERSION='38';
 const APP_DATE='2026-08-22';
 document.addEventListener('DOMContentLoaded',()=>{
   const el=document.getElementById('wersja');
@@ -1029,12 +1029,21 @@ function depositFor(m,grid,prices,corr){
 // Zdejmuje z drogich godzin zadaną dobową ilość kWh i dokłada ją w strefie
 // taniej razem z dodatkowymi stratami. Zabiera tylko z godzin z realnym
 // poborem — tam, gdzie pracuje PV, nie ma czego przenosić.
-function shiftSeries(m,perDay,lossPerDay){
+// prices podane => godziny tanie i drogie wybierane wg ceny, a nie pory doby.
+// Dziesięć najtańszych godzin doby gra rolę strefy taniej, czternaście
+// najdroższych — drogiej, czyli tak samo jak dzieli je G12.
+function shiftSeries(m,perDay,lossPerDay,prices){
   if(perDay<=0&&lossPerDay<=0) return {series:m.series,moved:0,added:0};
   const s=m.series.slice(); let moved=0,added=0;
   for(let d=0;d<m.nDays;d++){
-    const dayIdx=[],nightIdx=[];
-    for(let h=0;h<24;h++)(isNight(m.month,h)?nightIdx:dayIdx).push(d*24+h);
+    let dayIdx=[],nightIdx=[];
+    if(prices){
+      const idx=[]; for(let h=0;h<24;h++) idx.push(d*24+h);
+      idx.sort((a,b)=>prices[a]-prices[b]);
+      nightIdx=idx.slice(0,10); dayIdx=idx.slice(10);
+    }else{
+      for(let h=0;h<24;h++)(isNight(m.month,h)?nightIdx:dayIdx).push(d*24+h);
+    }
     let avail=0; for(const i of dayIdx) if(s[i]>0) avail+=s[i];
     const take=Math.min(perDay,avail);
     if(take>0&&avail>0){const k=take/avail; for(const i of dayIdx) if(s[i]>0) s[i]-=s[i]*k;}
@@ -1098,7 +1107,7 @@ function depUse(D,amount){               // najstarsze koszyki najpierw
 // Ten sam zestaw kolumn i te same szerokości w każdym miesiącu i w podsumowaniu,
 // żeby wiersze dało się porównywać wzrokiem przewijając stronę.
 const COLS=[
-  ['Wariant','150px'],['Pobór kWh','75px'],['Tanie godz.','120px'],['Odd. z PV','85px'],
+  ['Wariant','175px'],['Pobór kWh','75px'],['Tanie godz.','120px'],['Odd. z PV','85px'],
   ['Odd. z magaz.','105px'],['Depozyt zł','95px'],['zł/kWh','75px'],
   ['Do zapłaty zł','110px'],['vs G11 zł','100px']];
 function resultTable(items,footer){
@@ -1349,9 +1358,10 @@ function onePass(variants,opt0,cfg,startDep,startBat){
     }
     const sp=cfg.shiftOn?shiftParams(m.key):{per:0,loss:0};
     const sh=shiftSeries(m,sp.per,sp.loss);
+    const shDyn=shiftSeries(m,sp.per,sp.loss,prices);   // wersja sterowana ceną
     const rows=[],grids={},plany={};
     variants.forEach(v=>{
-      const series=v.shift?sh.series:m.series;
+      const series=v.shift?(v.dyn?shDyn.series:sh.series):m.series;
       let vo=opt;
       if(v.dyn){
         vo=Object.assign({},opt,{retailArr:dynRetail,cheapArr:dynCheap});
@@ -1362,7 +1372,7 @@ function onePass(variants,opt0,cfg,startDep,startBat){
             vo.roll={cost:i=>(prices[i]/1000+fixedPartAt(i))*cfg.vat,
                      publish:opt.publish, horyzont:24+(24-opt.publish), commitAll:true};
           }else{
-            const pl=planPriceZones(prices,v.shift?sh.series:m.series,v.cap,v.pow,
+            const pl=planPriceZones(prices,v.shift?shDyn.series:m.series,v.cap,v.pow,
                                     cfg.effOne,cfg.vat,fixedPartAt);
             vo.cheapArr=pl.cheap; vo.disArr=pl.dis;
           }
@@ -1430,9 +1440,9 @@ function run(){
     {id:'b',  name:`G12 +${fmt(capB,0)} kWh`+s12, g12:true, cap:capB,pow:powB,shift:false,dystG12:d12,price:prB}];
   if(document.getElementById('dynOn').checked){
     variants.push(
-      {id:'d0',name:'RCE dynamiczna',            g12:false,cap:0,   pow:0,   shift:false,dyn:true,dystG12:cfg.dynG12},
-      {id:'dA',name:`RCE dyn. +${fmt(capA,0)} kWh`,g12:false,cap:capA,pow:powA,shift:false,dyn:true,dystG12:cfg.dynG12,price:prA},
-      {id:'dB',name:`RCE dyn. +${fmt(capB,0)} kWh`,g12:false,cap:capB,pow:powB,shift:false,dyn:true,dystG12:cfg.dynG12,price:prB});
+      {id:'d0',name:'RCE',            g12:false,cap:0,   pow:0,   shift:false,dyn:true,dystG12:cfg.dynG12},
+      {id:'dA',name:`RCE +${fmt(capA,0)} kWh`,g12:false,cap:capA,pow:powA,shift:false,dyn:true,dystG12:cfg.dynG12,price:prA},
+      {id:'dB',name:`RCE +${fmt(capB,0)} kWh`,g12:false,cap:capB,pow:powB,shift:false,dyn:true,dystG12:cfg.dynG12,price:prB});
   }
   if(anyShift){
     if(cfg.shiftG11)
@@ -1441,6 +1451,11 @@ function run(){
       {id:'g12s',name:'G12 + noc'+s12,                        g12:true,cap:0,   pow:0,   shift:true,dystG12:d12},
       {id:'as',  name:`G12 +${fmt(capA,0)} kWh + noc`+s12, g12:true,cap:capA,pow:powA,shift:true,dystG12:d12,price:prA},
       {id:'bs',  name:`G12 +${fmt(capB,0)} kWh + noc`+s12, g12:true,cap:capB,pow:powB,shift:true,dystG12:d12,price:prB});
+    if(document.getElementById('dynOn').checked)
+      variants.push(
+        {id:'d0s',name:'RCE + tanie',                      g12:false,cap:0,   pow:0,   shift:true,dyn:true,dystG12:cfg.dynG12},
+        {id:'dAs',name:`RCE +${fmt(capA,0)} kWh + tanie`,  g12:false,cap:capA,pow:powA,shift:true,dyn:true,dystG12:cfg.dynG12,price:prA},
+        {id:'dBs',name:`RCE +${fmt(capB,0)} kWh + tanie`,  g12:false,cap:capB,pow:powB,shift:true,dyn:true,dystG12:cfg.dynG12,price:prB});
   }
 
   // Zapętlenie roku: powtarzamy przebieg, podając na wejście stan z końca
@@ -1879,7 +1894,7 @@ function monthCard(m,rows,grids,variants,prices,cov,sh,plany){
     }
     koszty[v.id]=arr;
   }
-  let tryb='kwh';
+  let tryb='kwh', sel=null;
   const cv=el.querySelector('canvas');
   // Jedna skala kolorów dla wszystkich wariantów, inaczej mapy nie dałoby się
   // porównywać między zakładkami. Górę skali bierzemy z 95. percentyla, a nie
@@ -1908,6 +1923,12 @@ function monthCard(m,rows,grids,variants,prices,cov,sh,plany){
       ctx.fillRect(h*CELL,d*CELL,CELL-1,CELL-1);
       if(isNight(m.month,h)){ctx.fillStyle='rgba(63,167,214,.16)';ctx.fillRect(h*CELL,d*CELL,CELL-1,2);}
     }
+    if(sel){                                   // ramka wokół wybranej komórki
+      ctx.strokeStyle='#e6edf7'; ctx.lineWidth=2;
+      ctx.strokeRect(sel.h*CELL-1,sel.d*CELL-1,CELL+1,CELL+1);
+      ctx.strokeStyle='rgba(13,20,32,.8)'; ctx.lineWidth=1;
+      ctx.strokeRect(sel.h*CELL-2.5,sel.d*CELL-2.5,CELL+4,CELL+4);
+    }
   };
   const leg=el.querySelector('[data-rola="legenda"]');
   let aktywny=variants[0].id;
@@ -1925,19 +1946,17 @@ function monthCard(m,rows,grids,variants,prices,cov,sh,plany){
   el.querySelectorAll('.tabs:not([data-rola]) .tab').forEach(b=>b.onclick=()=>{
     el.querySelectorAll('.tabs:not([data-rola]) .tab')
       .forEach(x=>x.setAttribute('aria-pressed','false'));
-    b.setAttribute('aria-pressed','true'); aktywny=b.dataset.k; draw(aktywny);});
+    b.setAttribute('aria-pressed','true'); aktywny=b.dataset.k; draw(aktywny); pokaz();});
   el.querySelectorAll('[data-rola="tryb"] .tab').forEach(b=>b.onclick=()=>{
     el.querySelectorAll('[data-rola="tryb"] .tab')
       .forEach(x=>x.setAttribute('aria-pressed','false'));
-    b.setAttribute('aria-pressed','true'); tryb=b.dataset.t; opis(); draw(aktywny);});
+    b.setAttribute('aria-pressed','true'); tryb=b.dataset.t; opis(); draw(aktywny); pokaz();});
   // Kliknięcie w komórkę: szczegóły tej godziny i podsumowanie całej doby.
   const box=el.querySelector('[data-rola="szczegol"]');
   const zl3=x=>fmt(x,3)+' zł';
-  cv.addEventListener('click',ev=>{
-    const r=cv.getBoundingClientRect();
-    const hh=Math.floor((ev.clientX-r.left)/r.width*24);
-    const dd=Math.floor((ev.clientY-r.top)/r.height*m.nDays);
-    if(hh<0||hh>23||dd<0||dd>=m.nDays) return;
+  function pokaz(){
+    if(!sel){box.innerHTML='';return}
+    const dd=sel.d, hh=sel.h;
     const v=variants.find(x=>x.id===aktywny)||variants[0];
     const i=dd*24+hh, g=grids[aktywny][i], k=koszty[aktywny][i];
     const noc=isNight(m.month,hh);
@@ -1976,7 +1995,15 @@ function monthCard(m,rows,grids,variants,prices,cov,sh,plany){
         ' / '+fmt(hi,0)+'</b></div>'+
       '<div class="w"><span>rozstęp a próg</span><b>'+fmt(hi-lo,0)+' vs '+fmt(prog,0)+
         ' zł/MWh'+(hi-lo<prog?' — za mało':'')+'</b></div></div></div>';
-    box.querySelector('.zamknij').onclick=()=>{box.innerHTML=''};
+    box.querySelector('.zamknij').onclick=()=>{sel=null;pokaz();draw(aktywny)};
+  }
+  cv.addEventListener('click',ev=>{
+    const r=cv.getBoundingClientRect();
+    const hh=Math.floor((ev.clientX-r.left)/r.width*24);
+    const dd=Math.floor((ev.clientY-r.top)/r.height*m.nDays);
+    if(hh<0||hh>23||dd<0||dd>=m.nDays) return;
+    sel=(sel&&sel.d===dd&&sel.h===hh)?null:{d:dd,h:hh};   // ponowne kliknięcie odznacza
+    pokaz(); draw(aktywny);
   });
   opis(); draw(aktywny);
   return el;
