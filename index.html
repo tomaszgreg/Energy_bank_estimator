@@ -17,7 +17,7 @@
 
   SPDX-License-Identifier: GPL-2.0-only
 
-  Wersja 34 (2026-08-22)
+  Wersja 35 (2026-08-22)
 -->
 <html lang="pl">
 <head>
@@ -539,7 +539,7 @@ async function readXlsx(buf){
 }
 
 /* ============ wersja ============ */
-const APP_VERSION='34';
+const APP_VERSION='35';
 const APP_DATE='2026-08-22';
 document.addEventListener('DOMContentLoaded',()=>{
   const el=document.getElementById('wersja');
@@ -1419,9 +1419,9 @@ function run(){
     {id:'b',  name:`G12 +${fmt(capB,0)} kWh`+s12, g12:true, cap:capB,pow:powB,shift:false,dystG12:d12,price:prB}];
   if(document.getElementById('dynOn').checked){
     variants.push(
-      {id:'d0',name:'RCE dynamiczna',            g12:false,cap:0,   pow:0,   shift:false,dyn:true},
-      {id:'dA',name:`RCE dyn. +${fmt(capA,0)} kWh`,g12:false,cap:capA,pow:powA,shift:false,dyn:true,price:prA},
-      {id:'dB',name:`RCE dyn. +${fmt(capB,0)} kWh`,g12:false,cap:capB,pow:powB,shift:false,dyn:true,price:prB});
+      {id:'d0',name:'RCE dynamiczna',            g12:false,cap:0,   pow:0,   shift:false,dyn:true,dystG12:cfg.dynG12},
+      {id:'dA',name:`RCE dyn. +${fmt(capA,0)} kWh`,g12:false,cap:capA,pow:powA,shift:false,dyn:true,dystG12:cfg.dynG12,price:prA},
+      {id:'dB',name:`RCE dyn. +${fmt(capB,0)} kWh`,g12:false,cap:capB,pow:powB,shift:false,dyn:true,dystG12:cfg.dynG12,price:prB});
   }
   if(anyShift){
     if(cfg.shiftG11)
@@ -1840,27 +1840,51 @@ function monthCard(m,rows,grids,variants,prices,cov,sh){
       ).join('<br>')}</div></div>
     <div class="tabs">${variants.map((v,i)=>
       `<button class="tab" data-k="${v.id}" aria-pressed="${i===0}">${v.name}</button>`).join('')}</div>
+    <div class="tabs" data-rola="tryb" style="margin-top:2px">
+      <button class="tab" data-t="kwh" aria-pressed="true">kWh</button>
+      <button class="tab" data-t="zl"  aria-pressed="false">zł</button>
+    </div>
     <canvas></canvas>
-    <div class="legend">
-      <span><i style="background:var(--day)"></i>pobór z sieci — im jaśniej, tym więcej</span>
-      <span><i style="background:var(--pv)"></i>oddawanie do sieci</span>
-      <span><i style="background:rgba(255,255,255,.05)"></i>zerowy pobór — magazyn pokrywa całość</span>
-      <span>poziomo: godziny 0–24 · pionowo: kolejne dni</span>
-    </div>`;
+    <div class="legend" data-rola="legenda"></div>`;
 
+  // Druga warstwa mapy: zamiast kilowatogodzin — złotówki zapłacone w tej godzinie.
+  // Ta sama kWh w drogiej i taniej strefie kosztuje inaczej, więc mapa kosztu
+  // pokazuje coś zupełnie innego niż mapa zużycia.
+  const vat=1+P('vat')/100, add=P('addv'), corr=P('corr'), mar=P('dynMargin');
+  const koszty={};
+  for(const v of variants){
+    const g=grids[v.id]; if(!g) continue;
+    const arr=new Float64Array(g.length);
+    for(let i=0;i<g.length;i++){
+      const noc=isNight(m.month,i%24);
+      if(g[i]>0){
+        const en=v.dyn?(prices[i]/1000+mar):(v.g12?(noc?P('eG12n'):P('eG12d')):P('eG11'));
+        const dy=v.dystG12?(noc?P('sG12n'):P('sG12d')):P('sG11');
+        arr[i]=g[i]*(en+dy+add)*vat;
+      }else if(g[i]<0){
+        arr[i]=g[i]*prices[i]/1000*corr;      // ujemne = depozyt na plus
+      }
+    }
+    koszty[v.id]=arr;
+  }
+  let tryb='kwh';
   const cv=el.querySelector('canvas');
   // Jedna skala kolorów dla wszystkich wariantów, inaczej mapy nie dałoby się
   // porównywać między zakładkami. Górę skali bierzemy z 95. percentyla, a nie
   // z maksimum: pojedyncze godziny ładowania pełną mocą inaczej spłaszczyłyby
   // resztę mapy tak, że różnica między zerowym a normalnym poborem znika.
-  const wsz=[];
-  for(const k of Object.keys(grids)) for(const v of grids[k]){
-    const a=Math.abs(v); if(a>0.01) wsz.push(a);
+  function skala(zrodlo){
+    const wsz=[];
+    for(const k of Object.keys(zrodlo)) for(const v of zrodlo[k]){
+      const a=Math.abs(v); if(a>0.01) wsz.push(a);
+    }
+    wsz.sort((a,b)=>a-b);
+    return Math.max(0.001,wsz.length?wsz[Math.floor(wsz.length*0.95)]:1);
   }
-  wsz.sort((a,b)=>a-b);
-  const mx=Math.max(0.001,wsz.length?wsz[Math.floor(wsz.length*0.95)]:1);
   const draw=k=>{
-    const g=grids[k],D=m.nDays,CELL=14;
+    const zrodlo=tryb==='kwh'?grids:koszty;
+    const mx=skala(zrodlo);
+    const g=zrodlo[k],D=m.nDays,CELL=14;
     cv.width=24*CELL; cv.height=D*CELL;
     const ctx=cv.getContext('2d');
     for(let d=0;d<D;d++)for(let h=0;h<24;h++){
@@ -1873,10 +1897,28 @@ function monthCard(m,rows,grids,variants,prices,cov,sh){
       if(isNight(m.month,h)){ctx.fillStyle='rgba(63,167,214,.16)';ctx.fillRect(h*CELL,d*CELL,CELL-1,2);}
     }
   };
-  el.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
-    el.querySelectorAll('.tab').forEach(x=>x.setAttribute('aria-pressed','false'));
-    b.setAttribute('aria-pressed','true'); draw(b.dataset.k);});
-  draw(variants[0].id);
+  const leg=el.querySelector('[data-rola="legenda"]');
+  let aktywny=variants[0].id;
+  function opis(){
+    leg.innerHTML = tryb==='kwh'
+      ? '<span><i style="background:var(--day)"></i>pobór z sieci — im jaśniej, tym więcej</span>'+
+        '<span><i style="background:var(--pv)"></i>oddawanie do sieci</span>'+
+        '<span><i style="background:rgba(255,255,255,.05)"></i>zerowy pobór — magazyn pokrywa całość</span>'+
+        '<span>poziomo: godziny 0–24 · pionowo: kolejne dni</span>'
+      : '<span><i style="background:var(--day)"></i>zapłacone w tej godzinie — im jaśniej, tym drożej</span>'+
+        '<span><i style="background:var(--pv)"></i>depozyt za energię oddaną</span>'+
+        '<span><i style="background:rgba(255,255,255,.05)"></i>zero złotych</span>'+
+        '<span>cena energii + dystrybucja + opłaty, brutto</span>';
+  }
+  el.querySelectorAll('.tabs:not([data-rola]) .tab').forEach(b=>b.onclick=()=>{
+    el.querySelectorAll('.tabs:not([data-rola]) .tab')
+      .forEach(x=>x.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true'); aktywny=b.dataset.k; draw(aktywny);});
+  el.querySelectorAll('[data-rola="tryb"] .tab').forEach(b=>b.onclick=()=>{
+    el.querySelectorAll('[data-rola="tryb"] .tab')
+      .forEach(x=>x.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true'); tryb=b.dataset.t; opis(); draw(aktywny);});
+  opis(); draw(aktywny);
   return el;
 }
 </script>
